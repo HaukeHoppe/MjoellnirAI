@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+
+  # =====================================================
+  # Open WebUI
+  # =====================================================
+
+  open-webui:
+    build:
+      context: .
+      dockerfile: Dockerfile.open-webui
+    container_name: open-webui
+
+    ports:
+      - "3000:8080"
+
+    volumes:
+      - ./pdfs:/data
+      - ./open-webui-data:/app/backend/data
+
+    environment:
+      - ENABLE_SIGNUP=true
+      - PIPELINES_URL=http://pipelines:9099
+
+    restart: always
+
+    depends_on:
+      - pipelines
+      - pipelines-capital
+
+
+  # =====================================================
+  # Open WebUI Pipelines
+  # =====================================================
+
+  pipelines:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipelines
+
+    container_name: open-webui-pipelines
+
+    ports:
+      - "9099:9099"
+
+    volumes:
+      - ./pdfs:/data
+
+    environment: &pipelines_env
+      # Pipeline print() output (e.g. rejected claims) shows up in docker logs immediately.
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+
+    restart: always
+
+
+  # =====================================================
+  # Open WebUI Pipelines #2 - Capital Markets RAG
+  # Loads pipelines-capital/capital_rag_pipeline.py on startup.
+  # Add in Open WebUI as a second connection:
+  #   http://pipelines-capital:9099  (key: 0p3n-w3bu!)
+  # =====================================================
+
+  pipelines-capital:
+    build:
+      context: .
+      dockerfile: Dockerfile.pipelines
+
+    container_name: open-webui-pipelines-capital
+
+    ports:
+      - "9098:9099"
+
+    volumes:
+      - ./pdfs:/data
+      - ./pipelines-capital:/app/pipelines
+
+    environment: *pipelines_env
+
+    restart: always
