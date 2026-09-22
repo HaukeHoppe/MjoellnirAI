@@ -1,0 +1,28 @@
+# ---- Secrets -------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.key
+.webui_secret_key
+
+# ---- Open WebUI runtime data (database, uploads, vector DB, model cache) --
+open-webui-data/
+
+# ---- Generated vector indexes and extracted corpora ----------------------
+pdfs/faiss_climate_index/
+pdfs/faiss_capital_index/
+*.faiss
+*.pkl
+
+# ---- Python ---------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# ---- Editor / OS ----------------------------------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log
