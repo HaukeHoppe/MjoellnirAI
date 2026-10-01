@@ -2,6 +2,7 @@
 
 Technical documentation of the Capital Markets RAG pipeline: what it does, how data flows
 through it, how it keeps the model from hallucinating, and what happens when a step fails.
+For the design rationale behind each step, see [`CAPITAL_RAG_BEST_PRACTICES.md`](CAPITAL_RAG_BEST_PRACTICES.md).
 
 | File | Role |
 |------|------|
