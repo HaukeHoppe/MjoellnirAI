@@ -8,7 +8,9 @@ Local Open WebUI stack with two Pipelines servers that serve custom RAG pipeline
 | `pipelines`         | 9099 | Climate PDF RAG (smoke-test pipeline)                     |
 | `pipelines-capital` | 9098 | Capital Markets RAG (`pipelines-capital/capital_rag_pipeline.py`) |
 
-See `architecture_diagram.png` for an overview.
+See `architecture_diagram.png` for an overview and
+[`docs/CAPITAL_RAG_PIPELINE.md`](docs/CAPITAL_RAG_PIPELINE.md) for a detailed description of the
+Capital Markets RAG pipeline (ingestion, query workflow, hallucination checks, fallbacks, valves).
 
 ## Setup
 
