@@ -1,6 +1,7 @@
 """
-Renders architecture_diagram.png (repo root): Docker architecture, offline
-ingestion and query-time flow of the Capital Markets RAG pipeline.
+Renders architecture_diagram.png (repo root): a component-level overview of the
+Capital Markets RAG pipeline for readers who know RAG concepts but not the code.
+Implementation details (files, ports, thresholds) are in README.md and docs/.
 
     python docs/architecture_diagram.py
 """
@@ -13,227 +14,165 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import FancyBboxPatch  # noqa: E402
 
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "architecture_diagram.png")
+OUT = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "architecture_diagram.png"))
 
 # (fill, edge)
-YELLOW = ("#fff8c4", "#a16207")
-GREEN = ("#ecfccb", "#4d7c0f")
-GREEN_DARK = ("#d9f99d", "#4d7c0f")
-BLUE = ("#dbeafe", "#1d4ed8")
-RED = ("#ffe4e6", "#be123c")
-RED_DARK = ("#fecaca", "#991b1b")
-GRAY = ("#f3f4f6", "#6b7280")
-PURPLE = ("#fae8ff", "#a21caf")
+PLATFORM = ("#eef2ff", "#4338ca")
+DATA = ("#ecfccb", "#4d7c0f")
+STORE = ("#d9f99d", "#3f6212")
+SEARCH = ("#e0f2fe", "#0369a1")
+LLM = ("#dbeafe", "#1d4ed8")
+CHECK = ("#ffedd5", "#c2410c")
 OK = ("#dcfce7", "#15803d")
-ORANGE = ("#ffedd5", "#c2410c")
+NO = ("#fee2e2", "#b91c1c")
 INK = "#1f2937"
 MUTED = "#4b5563"
 
-fig, ax = plt.subplots(figsize=(17, 24))
+fig, ax = plt.subplots(figsize=(17, 20.5))
 ax.set_xlim(0, 100)
-ax.set_ylim(0, 141)
+ax.set_ylim(0, 122)
 ax.axis("off")
 fig.patch.set_facecolor("white")
 
 
-def box(x, y, w, h, text, color, size=8.6, bold=False, title=None):
+def box(x, y, w, h, title, text, color, size=10):
     fill, edge = color
-    ax.add_patch(
-        FancyBboxPatch(
-            (x, y), w, h,
-            boxstyle="round,pad=0,rounding_size=1.6",
-            facecolor=fill, edgecolor=edge, linewidth=1.8,
-        )
-    )
-    cy = y + h / 2
-    if title:
-        # Bold title on its own line at the top; body centered in the space below.
-        ax.text(x + w / 2, y + h - 1.0, title, ha="center", va="top", fontsize=size + 0.6,
-                color=INK, fontweight="bold")
-        cy = y + (h - 2.2) / 2
-    ax.text(
-        x + w / 2, cy, text, ha="center", va="center", fontsize=size,
-        color=INK, fontweight="bold" if bold else "normal", linespacing=1.35,
-    )
+    ax.add_patch(FancyBboxPatch((x, y), w, h, boxstyle="round,pad=0,rounding_size=1.6",
+                                facecolor=fill, edgecolor=edge, linewidth=2))
+    ax.text(x + w / 2, y + h - 1.3, title, ha="center", va="top", fontsize=size + 1.6,
+            color=edge, fontweight="bold")
+    ax.text(x + w / 2, y + (h - 2.6) / 2, text, ha="center", va="center", fontsize=size,
+            color=INK, linespacing=1.4)
     return (x, y, w, h)
 
 
-def frame(x, y, w, h, label, dashed=False):
-    ax.add_patch(
-        FancyBboxPatch(
-            (x, y), w, h,
-            boxstyle="round,pad=0,rounding_size=2",
-            facecolor="none", edgecolor="#9ca3af", linewidth=1.6,
-            linestyle=(0, (5, 4)) if dashed else "solid",
-        )
-    )
-    ax.text(x + 1.5, y + h - 1.4, label, fontsize=9.5, color=MUTED,
-            fontweight="normal" if dashed else "bold", style="italic" if dashed else "normal", va="top")
-
-
-def arrow(start, end, label=None, rad=0.0, label_pos=0.5, color=INK, dx=0, dy=0):
-    ax.annotate(
-        "", xy=end, xytext=start,
-        arrowprops=dict(arrowstyle="-|>", color=color, lw=1.6, mutation_scale=14,
-                        connectionstyle=f"arc3,rad={rad}", shrinkA=2, shrinkB=2),
-    )
+def arrow(start, end, label=None, rad=0.0, pos=0.5, dx=0, dy=0, color=INK, style="solid", both=False):
+    ax.annotate("", xy=end, xytext=start, arrowprops=dict(
+        arrowstyle="<|-|>" if both else "-|>", color=color, lw=1.8, mutation_scale=16,
+        linestyle=style, connectionstyle=f"arc3,rad={rad}", shrinkA=2, shrinkB=2))
     if label:
-        lx = start[0] + (end[0] - start[0]) * label_pos + dx
-        ly = start[1] + (end[1] - start[1]) * label_pos + dy
-        ax.text(lx, ly, label, fontsize=8.2, color=MUTED, ha="center", va="center",
-                bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.95))
+        ax.text(start[0] + (end[0] - start[0]) * pos + dx, start[1] + (end[1] - start[1]) * pos + dy,
+                label, fontsize=9.5, color=color if color != INK else MUTED, ha="center", va="center",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", edgecolor="none"))
 
 
-def section(y, text, color):
-    ax.text(2, y, text, fontsize=13, fontweight="bold", color=color, va="center")
+def section(y, title, note, color):
+    ax.text(2, y, title, fontsize=15, fontweight="bold", color=color, va="center")
+    ax.text(98, y, note, fontsize=10.5, color=MUTED, style="italic", va="center", ha="right")
+    ax.plot([2, 98], [y - 1.8, y - 1.8], color="#e5e7eb", lw=1.2)
 
 
 def mid(b, side):
     x, y, w, h = b
-    return {
-        "l": (x, y + h / 2), "r": (x + w, y + h / 2),
-        "t": (x + w / 2, y + h), "b": (x + w / 2, y),
-    }[side]
+    return {"l": (x, y + h / 2), "r": (x + w, y + h / 2), "t": (x + w / 2, y + h), "b": (x + w / 2, y)}[side]
 
 
-ax.text(50, 139, "Capital Markets RAG  —  architecture", ha="center", fontsize=19, fontweight="bold", color=INK)
-
-# ---------------------------------------------------------------------------
-# 1. Docker architecture
-# ---------------------------------------------------------------------------
-section(134.5, "1  Docker architecture", "#111827")
-frame(1.5, 96, 97, 36, "Host: Windows machine (Docker Desktop)")
-frame(32, 110.5, 64.5, 18.5, "Docker network (compose default)", dashed=True)
-
-browser = box(4, 118, 18, 8, "Browser\nlocalhost:3000", YELLOW, size=10)
-host = box(
-    4, 98.5, 24, 16,
-    "Host folder  pdfs/   →  /data\n\n"
-    "faiss_capital_index/   (git-ignored)\n"
-    "  extracted_v2_all.json  (source)\n"
-    "  index.faiss · index.pkl\n"
-    "  graph.json · summaries.json\n"
-    "ingest_capital_chunks.py\n"
-    "generate / apply_start_suggestions.py",
-    GREEN, size=8.3,
-)
-webui = box(
-    34.5, 112, 25, 13,
-    "port 3000 → 8080\nvolumes: pdfs → /data\nopen-webui-data → /app/backend/data\n"
-    "model picker: Capital Markets RAG",
-    BLUE, title="container: open-webui",
-)
-capital = box(
-    64, 112, 30.5, 13,
-    "port 9098 → 9099\nvolumes: pdfs → /data\npipelines-capital/ → /app/pipelines\n"
-    "env: OPENAI_API_KEY  (from .env)\nloads capital_rag_pipeline.py at startup",
-    RED, title="container: open-webui-pipelines-capital",
-)
-conn = box(
-    34.5, 98.5, 25, 9.5,
-    "Admin › Settings › Connections\nURL  http://pipelines-capital:9099\n"
-    "Auth: Pipelines API key  (added manually)",
-    GRAY,
-)
-openai = box(
-    64, 98.5, 30.5, 9.5,
-    "OpenAI API  (external)\ntext-embedding-3-large · gpt-4o-mini · gpt-4o",
-    PURPLE, size=9,
-)
-
-arrow(mid(browser, "r"), (34.5, 121), "HTTP :3000")
-arrow(mid(webui, "r"), mid(capital, "l"), "OpenAI-compatible\nchat (streamed)", dy=0)
-arrow(mid(webui, "b"), mid(conn, "t"), "reads connection")
-arrow(mid(capital, "b"), mid(openai, "t"), "embeddings / LLM calls")
-arrow((28, 110), (34.5, 114), "bind mount /data\n(both containers)", label_pos=0.45, dy=-2.6)
+ax.text(50, 120, "Capital Markets RAG  —  how it works", ha="center", fontsize=21, fontweight="bold", color=INK)
+ax.text(50, 116.8, "A chat assistant that answers questions about a creator's capital-markets videos "
+        "— only with what the videos actually say.", ha="center", fontsize=11.5, color=MUTED)
 
 # ---------------------------------------------------------------------------
-# 2. Offline ingestion
+# The platform
 # ---------------------------------------------------------------------------
-section(92, "2  Offline ingestion  (manual:  docker exec … ingest_capital_chunks.py,  then restart the container)", "#3f6212")
+section(111.5, "The platform", "three components, each in its own Docker container or service", PLATFORM[1])
+W3, PY, PH = 28, 98, 10.5
+p_chat = box(2, PY, W3, PH, "Chat interface",
+             "Open WebUI: where users ask questions\nand see answers, sources and\nsuggested follow-up questions", PLATFORM)
+p_engine = box(36, PY, W3, PH, "RAG engine",
+               "Our custom pipeline: searches, judges,\nwrites and fact-checks — the logic\nshown in sections 1 and 2", PLATFORM)
+p_llm = box(70, PY, W3, PH, "Language models",
+            "OpenAI: embeddings for search, a fast\nmodel for most steps, a stronger\nmodel for fact-checking", PLATFORM)
+arrow(mid(p_chat, "r"), mid(p_engine, "l"), "question / answer", both=True, dy=2.2)
+arrow(mid(p_engine, "r"), mid(p_llm, "l"), "AI calls", both=True, dy=2.2)
 
-W, H, Y = 14.6, 12.5, 76.5
-xs = [1.5, 18, 34.5, 51, 67.5, 84]
-ing = [
-    box(xs[0], Y, W, H, "chunks with content,\nembedding_text,\nhypothetical_questions,\nconcepts, relations,\nsources (video labels)", GREEN, title="extracted_v2_all.json"),
-    box(xs[1], Y, W, H, "concept  vs  opinion\nmixed  →  opinion\ngpt-4o-mini, cached by\ncontent hash\nchunk_classes.json", GREEN, title="Classify chunks"),
-    box(xs[2], Y, W, H, "timeless  vs  time-bound\none relation per request\n(batching unreliable)\nrelation_classes.json", GREEN, title="Classify relations"),
-    box(xs[3], Y, W, H, "embedding_text  +\neach hypothetical question\n≈ 10 vectors / chunk,\nall → the full chunk\ntext-embedding-3-large", GREEN, title="HyPE embedding"),
-    box(xs[4], Y, W, H, "cluster concept chunks\ncosine ≥ 0.73, ≥ 2 videos\nopinions never merged\nsummarize from passages\nsummaries.json", GREEN, title="RAPTOR summaries"),
-    box(xs[5], Y, W, H, "MAX_INNER_PRODUCT\n+ L2 normalized\n=  cosine similarity\nchunks + summaries\nindex.faiss / index.pkl", GREEN_DARK, title="FAISS index"),
+# ---------------------------------------------------------------------------
+# 1. Building the knowledge base
+# ---------------------------------------------------------------------------
+section(92, "1   Building the knowledge base", "done once, offline — before anyone asks a question", DATA[1])
+W5, RY, RH = 18, 70.5, 17
+xs = [2, 21.5, 41, 60.5, 80]
+k_src = box(xs[0], RY, W5, RH, "Video transcripts",
+            "Passages from the videos,\npre-tagged with their key\nconcepts, cause → effect\nstatements and example\nquestions they answer", DATA)
+k_cls = box(xs[1], RY, W5, RH, "Content classifier",
+            "An LLM labels every passage:\ntimeless concept  or\ntime-bound opinion\n(forecasts, market views).\nWhen in doubt: opinion.", DATA)
+k_vec = box(xs[2], RY, W5, RH, "Multi-vector indexing",
+            "Each passage is stored under\nits own text AND under the\nquestions it answers, so a\nuser's question can match\na similar question", DATA)
+k_sum = box(xs[3], RY, W5, RH, "Concept summaries",
+            "When the same idea is\nexplained in several videos,\nan LLM merges it into one\ncomplete summary — using\nonly what the videos say", DATA)
+k_graph = box(xs[4], RY, W5, RH, "Knowledge graph",
+              "Links concepts through their\ncause → effect relations,\ne.g. interest rates → bond\nprices, and remembers which\npassages state each link", DATA)
+for a, b in zip([k_src, k_cls, k_vec, k_sum], [k_cls, k_vec, k_sum, k_graph]):
+    arrow(mid(a, "r"), mid(b, "l"))
+
+# Knowledge base (the stores the engine reads at question time)
+ax.add_patch(FancyBboxPatch((2, 54.5), 96, 12, boxstyle="round,pad=0,rounding_size=1.8",
+                            facecolor="#f7fee7", edgecolor=STORE[1], linewidth=2, linestyle=(0, (6, 3))))
+ax.text(4, 65.2, "Knowledge base", fontsize=12, fontweight="bold", color=STORE[1], va="center")
+SW, SY, SH = 21, 55.8, 7.6
+s_sem = box(4, SY, SW, SH, "Semantic index", "finds passages by meaning", STORE, size=9.5)
+s_kw = box(27.5, SY, SW, SH, "Keyword index", "finds exact terms, names, tickers", STORE, size=9.5)
+s_sum = box(51, SY, SW, SH, "Summaries", "complete cross-video explanations", STORE, size=9.5)
+s_graph = box(74.5, SY, SW, SH, "Graph", "concepts and their cause → effect links", STORE, size=9.5)
+arrow(mid(k_vec, "b"), (20, SY + SH))
+arrow(mid(k_vec, "b"), (40, SY + SH))
+arrow(mid(k_sum, "b"), mid(s_sum, "t"))
+arrow(mid(k_graph, "b"), mid(s_graph, "t"))
+
+# ---------------------------------------------------------------------------
+# 2. Answering a question
+# ---------------------------------------------------------------------------
+section(50, "2   Answering a question", "every chat message — shown only after the fact check", SEARCH[1])
+AY, AH = 33, 13.5
+a_q = box(xs[0], AY, W5, AH, "Question", "asked in the chat", PLATFORM)
+a_search = box(xs[1], AY, W5, AH, "Hybrid search",
+               "meaning-based search +\nkeyword search, merged\ninto one ranking", SEARCH)
+a_graph = box(xs[2], AY, W5, AH, "Graph expansion",
+              "adds passages that state\nthe same cause → effect,\noften from other videos", SEARCH)
+a_judge = box(xs[3], AY, W5, AH, "Relevance judge",
+              "an LLM keeps only the\nfew passages that really\nanswer THIS question", CHECK)
+a_write = box(xs[4], AY, W5, AH, "Answer writer",
+              "an LLM writes only from\nthose passages, cites each\nstatement, names the video\nfor every opinion", LLM)
+for a, b in zip([a_q, a_search, a_graph, a_judge], [a_search, a_graph, a_judge, a_write]):
+    arrow(mid(a, "r"), mid(b, "l"))
+arrow((30.5, 54.5), mid(a_search, "t"), "looks up", style="dashed", color=STORE[1], dx=4.5)
+arrow((50, 54.5), mid(a_graph, "t"), "looks up", style="dashed", color=STORE[1], dx=4.5)
+
+# Checking loop: not covered <- fixer <-> fact checker, verified answer below.
+BY = 16.5
+a_check = box(80, BY, 18, AH, "Fact checker",
+              "a stronger LLM splits the\nanswer into single claims;\nrules verify each one has a\nword-for-word quote with\nthe same cause & certainty", CHECK, size=9.6)
+a_fix = box(58, BY, 17, AH, "Fixer",
+            "removes or corrects\nthe unproven claims,\nthen checks again\n(up to 2 rounds)", CHECK)
+a_no = box(35.5, BY, 18, AH, "Honest \"not covered\"",
+           "no guessing: says the\nvideos don't answer this\nand suggests related\ntopics that ARE covered", NO)
+arrow(mid(a_write, "b"), mid(a_check, "t"))
+arrow((80, BY + 9), (75, BY + 9), "unproven", dy=2.0)
+arrow((75, BY + 4), (80, BY + 4), "re-check", dy=-2.0)
+arrow(mid(a_fix, "l"), mid(a_no, "r"), "still\nunproven", dy=3.2)
+arrow((62.5, AY), (47, BY + AH), "nothing relevant found", pos=0.5, dy=0.2, color=NO[1])
+
+CY = 1
+a_ok = box(58, CY, 40, AH, "Verified answer  ✓",
+           "shown with its sources and why each source was used,\n"
+           "plus suggested next questions — each checked to be answerable", OK)
+arrow(mid(a_check, "b"), (89, CY + AH), "all claims proven ✓", dx=-6.5)
+
+# Design principles
+ax.add_patch(FancyBboxPatch((2, 1), 31, 29, boxstyle="round,pad=0,rounding_size=1.8",
+                            facecolor="#f9fafb", edgecolor="#9ca3af", linewidth=1.6))
+ax.text(4, 27.6, "Design principles", fontsize=12.5, fontweight="bold", color=INK, va="center")
+principles = [
+    "Answer only from the videos —\nno general textbook knowledge",
+    "Every claim is proven by a\nword-for-word quote",
+    "Keep the source's cause and certainty\n(\"could\" never becomes \"always\")",
+    "Opinions are time-bound: always\nname the video they come from",
+    "Conflicting views are shown side\nby side, never blended",
+    "No proof, no answer — suggest\nrelated topics instead of guessing",
 ]
-for a, b in zip(ing, ing[1:]):
-    arrow(mid(a, "r"), mid(b, "l"))
+for i, p in enumerate(principles):
+    y = 23.9 - i * 3.85
+    ax.text(4.2, y, "✓", fontsize=12, color=OK[1], fontweight="bold", va="center")
+    ax.text(6.6, y, p, fontsize=9.6, color=INK, va="center", linespacing=1.25)
 
-graph = box(
-    1.5, 66, 31.1, 7.5,
-    "nodes = concepts  ·  edges = source → target (direction)\nwith the chunks that assert each relation",
-    GREEN, size=8.4, title="Concept graph  graph.json",
-)
-starts = box(
-    51, 66, 47.6, 7.5,
-    "generate_start_suggestions.py:  best-supported summaries → starter questions,\n"
-    "kept only if the grader confirms them  →  apply_start_suggestions.py (Open WebUI model)",
-    GREEN, size=8.4, title="Start-page suggestions",
-)
-arrow((xs[0] + W / 2, Y), (xs[0] + W / 2, 73.5), "relations", label_pos=0.5)
-arrow((xs[4] + W / 2, Y), (xs[4] + W / 2, 73.5), "summaries.json", label_pos=0.5)
-
-# ---------------------------------------------------------------------------
-# 3. Query time
-# ---------------------------------------------------------------------------
-section(61.5, "3  Query time  (every chat message,  Pipeline.pipe())", "#9f1239")
-
-QY, QH = 47, 11.5
-q_user = box(1.5, QY, 11, QH, "User question\n(Open WebUI chat)", RED, size=9)
-q_route = box(15, QY, 14.5, QH, "'### Task:' ?\nfollow-ups → explorer\ntitle / tags → plain LLM\nelse: answer pipeline", RED, title="Routing")
-q_ret = box(32, QY, 17, QH, "dense: 40 hits, cos ≥ 0.35\n+ BM25: top 40 (stopwords)\nmin-max, 0.6·dense + 0.4·bm25\n→ top 12 candidates", RED, title="Hybrid retrieval")
-q_graph = box(51.5, QY, 14, QH, "chunks asserting the\nsame source → target\nrelation as the top 3\n+ ≤ 4 candidates", RED, title="Graph expansion")
-q_grade = box(68, QY, 14.5, QH, "gpt-4o-mini, structured\nsupports_answer  AND\nrelevance ≥ 6 / 10\n→ top 5", ORANGE, title="LLM relevance gate")
-q_ctx = box(84.5, QY, 14, QH, "[n] CONCEPT  /  OPINION\n+ video labels\nRelation TIMELESS /\nTIME-BOUND", RED, title="Context blocks")
-for a, b in [(q_user, q_route), (q_route, q_ret), (q_ret, q_graph), (q_graph, q_grade), (q_grade, q_ctx)]:
-    arrow(mid(a, "r"), mid(b, "l"))
-
-BY = 29.5
-q_gen = box(84.5, BY, 14, QH, "gpt-4o-mini, temp 0\ncontext only, cite [n]\nno textbook knowledge\nkeep certainty, attribute\nopinions to their video", BLUE, size=8.2, title="Generate answer")
-q_check = box(64, BY, 17.5, QH, "gpt-4o splits into claims\n+ CODE checks:\nquote really in context\n(1 sentence, ≥ 90 % match)\nsame cause · video named", ORANGE, size=8.2, title="Claim check")
-q_rev = box(44.5, BY, 15.5, QH, "gpt-4o, targeted fixes:\ndelete unsupported\nadd video title\nsplit merged statements\nmax 2 rounds", ORANGE, size=8.2, title="Revise")
-q_trim = box(25.5, BY, 15, QH, "drop flagged sentences\ncheck again,\nsame bar\nmust keep ≥ 1 fact", ORANGE, size=8.4, title="Trim (last resort)")
-q_refuse = box(1.5, BY, 20.5, QH, "\"Dazu habe ich in den Quellen\nleider keine belegte Antwort …\"\n+ verified related topics\n(explorer, clickable chips)", RED_DARK, size=8.3, title="Refuse  (fail closed)")
-
-arrow(mid(q_ctx, "b"), mid(q_gen, "t"))
-arrow(mid(q_gen, "l"), mid(q_check, "r"))
-arrow((64, BY + 8), (60, BY + 8), "problems", dy=1.6)
-arrow((60, BY + 3.5), (64, BY + 3.5), "re-check", dy=-1.6)
-arrow(mid(q_rev, "l"), mid(q_trim, "r"), "still failing", dy=1.7)
-arrow(mid(q_trim, "l"), mid(q_refuse, "r"), "not clean", dy=1.7)
-arrow((75.25, QY), (11.75, BY + QH), "no chunk passes the gate", label_pos=0.5, dy=1.5, color="#991b1b")
-
-CY = 11.5
-q_ans = box(44.5, CY, 25, QH, "shown only after the check\n(never streamed unchecked)\nQuellen: only cited blocks,\nKonzept / Meinung + relevance reason", OK, size=8.4, title="Answer + sources  ✓")
-q_fu = box(76, CY, 22.5, QH, "Open WebUI follow-up task\n→ explorer, after the answer\nquestions verified against\ntheir excerpt (same gate)", OK, size=8.4, title="Follow-up chips")
-arrow(mid(q_check, "b"), (64, CY + QH), "all supported ✓", label_pos=0.45, dx=3)
-arrow(mid(q_trim, "b"), (44.5, CY + 6), "clean", rad=0.25, label_pos=0.5, dx=-2)
-arrow(mid(q_ans, "r"), mid(q_fu, "l"))
-
-# ---------------------------------------------------------------------------
-# Legend
-# ---------------------------------------------------------------------------
-ax.text(
-    1.5, 5.5,
-    "Fallbacks:  missing index → server starts, replies with the ingestion command  ·  missing graph.json → no graph expansion  ·  "
-    "failed grading call → only that chunk skipped\n"
-    "check raises an exception → refuse (an unchecked answer is never shown)  ·  CHECK_ANSWER_GROUNDING = False → "
-    "streams an unchecked answer marked \"(ungeprüft)\"  ·  details: README.md, docs/",
-    fontsize=8.6, color=MUTED, va="center", style="italic", linespacing=1.5,
-)
-for i, (color, label) in enumerate(
-    [(GREEN, "offline / data"), (RED, "retrieval"), (ORANGE, "verification gate"), (BLUE, "generation"), (OK, "shown to user"), (RED_DARK, "refusal")]
-):
-    x = 1.5 + i * 16
-    ax.add_patch(FancyBboxPatch((x, 0.8), 2.4, 1.8, boxstyle="round,pad=0,rounding_size=0.4",
-                                facecolor=color[0], edgecolor=color[1], linewidth=1.4))
-    ax.text(x + 3.2, 1.7, label, fontsize=8.8, color=MUTED, va="center")
-
-fig.savefig(OUT, dpi=140, bbox_inches="tight", pad_inches=0.3, facecolor="white")
+fig.savefig(OUT, dpi=130, bbox_inches="tight", pad_inches=0.35, facecolor="white")
 print(f"Saved {os.path.abspath(OUT)}")
