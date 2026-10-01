@@ -11,6 +11,8 @@ Local Open WebUI stack with two Pipelines servers that serve custom RAG pipeline
 See `architecture_diagram.png` for an overview and
 [`docs/CAPITAL_RAG_PIPELINE.md`](docs/CAPITAL_RAG_PIPELINE.md) for a detailed description of the
 Capital Markets RAG pipeline (ingestion, query workflow, hallucination checks, fallbacks, valves).
+[`docs/CAPITAL_RAG_BEST_PRACTICES.md`](docs/CAPITAL_RAG_BEST_PRACTICES.md) explains the architecture and the
+retrieval and grounding practices that make sure answers come only from the real source data.
 
 ## Setup
 
