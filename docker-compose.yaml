@@ -111,6 +111,7 @@ services:
 
     environment:
       - WEBUI_URL=${WEBUI_URL:?set WEBUI_URL in .env}
+      - ACME_EMAIL=${ACME_EMAIL:?set ACME_EMAIL in .env}
 
     restart: always
 

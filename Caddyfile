@@ -1,7 +1,13 @@
 # HTTPS entry point for Open WebUI on a VPS (compose profile "vps").
 # The site address is WEBUI_URL from .env, e.g. https://chat.example.com. Caddy obtains and
-# renews a Let's Encrypt certificate for that domain automatically and redirects HTTP to HTTPS.
+# renews a certificate for that domain automatically and redirects HTTP to HTTPS.
 # Requirements: the domain's DNS A/AAAA record points at the VPS, ports 80 and 443 are open.
+
+{
+	# With an email set, Caddy falls back from Let's Encrypt to ZeroSSL when Let's Encrypt
+	# refuses (e.g. its 50-certificates-per-domain limit on shared hoster domains).
+	email {$ACME_EMAIL}
+}
 
 {$WEBUI_URL} {
 	encode zstd gzip
