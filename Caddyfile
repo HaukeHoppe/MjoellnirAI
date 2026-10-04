@@ -16,6 +16,17 @@
 	# disallows crawling; this header also covers bots that skip robots.txt.
 	header X-Robots-Tag "noindex, nofollow, noarchive"
 
+	# Browser hardening: HTTPS only for a year (HSTS), no MIME sniffing, no framing by other
+	# sites (clickjacking), no full URLs leaked to other sites. No CSP: Open WebUI loads inline
+	# scripts and styles that a strict policy would break.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
 	# Chat streaming (SSE) and websockets are proxied without extra config.
 	reverse_proxy open-webui:8080
 }
