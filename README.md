@@ -229,7 +229,7 @@ by the model. Start-page suggestions are verified the same way
 ## Setup
 
 ```sh
-cp .env.example .env                 # set OPENAI_API_KEY and PIPELINES_API_KEY
+cp .env.example .env                 # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
 
 # put extracted_v2_all.json into pdfs/faiss_capital_index/, then:
@@ -244,7 +244,7 @@ Optional start-page suggestions:
 
 ```sh
 docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
-docker exec -w /app/backend open-webui sh -c 'WEBUI_SECRET_KEY="$(cat .webui_secret_key)" python /data/apply_start_suggestions.py'
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 ```
 
 > `docker-compose.yaml` uses absolute Windows host paths for its volumes. Adjust them on other machines.

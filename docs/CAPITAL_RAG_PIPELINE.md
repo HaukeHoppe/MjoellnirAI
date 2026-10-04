@@ -512,7 +512,7 @@ flowchart LR
 
 ```sh
 docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
-docker exec -w /app/backend open-webui sh -c 'WEBUI_SECRET_KEY="$(cat .webui_secret_key)" python /data/apply_start_suggestions.py'
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 # then reload the browser tab
 ```
 
@@ -571,7 +571,7 @@ Ingestion flags: `--index_dir`, `--chunks`, `--embedding_model`, `--llm_model`, 
 
 ```sh
 # first setup
-cp .env.example .env                       # set OPENAI_API_KEY and PIPELINES_API_KEY
+cp .env.example .env                       # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
 # put extracted_v2_all.json into pdfs/faiss_capital_index/
 docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py

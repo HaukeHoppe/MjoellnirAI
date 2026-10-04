@@ -26,6 +26,9 @@ services:
       # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
       - ENABLE_SIGNUP=false
       - DEFAULT_USER_ROLE=pending
+      # Fixed signing key so sessions survive container rebuilds; public URL for links and OAuth.
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env}
+      - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
       - PIPELINES_URL=http://pipelines:9099
 
     restart: always
