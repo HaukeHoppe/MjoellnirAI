@@ -41,8 +41,8 @@ services:
 
     container_name: open-webui-pipelines
 
-    ports:
-      - "9099:9099"
+    # No published ports: Open WebUI reaches the pipelines servers over the internal
+    # compose network. Anyone holding the API key can upload and run Python code here.
 
     volumes:
       - ./pdfs:/data
@@ -51,6 +51,7 @@ services:
       # Pipeline print() output (e.g. rejected claims) shows up in docker logs immediately.
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY:?set PIPELINES_API_KEY in .env}
 
     restart: always
 
@@ -59,7 +60,7 @@ services:
   # Open WebUI Pipelines #2 - Capital Markets RAG
   # Loads pipelines-capital/capital_rag_pipeline.py on startup.
   # Add in Open WebUI as a second connection:
-  #   http://pipelines-capital:9099  (key: 0p3n-w3bu!)
+  #   http://pipelines-capital:9099  (key: PIPELINES_API_KEY from .env)
   # =====================================================
 
   pipelines-capital:
@@ -68,9 +69,6 @@ services:
       dockerfile: Dockerfile.pipelines
 
     container_name: open-webui-pipelines-capital
-
-    ports:
-      - "9098:9099"
 
     volumes:
       - ./pdfs:/data

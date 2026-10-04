@@ -108,7 +108,7 @@ webui = box(22.5, 120.5, 21.5, 13.5, "open-webui",
             tech="image open-webui:main\nport 3000 → 8080")
 engine = box(51, 120.5, 23.5, 13.5, "pipelines-capital  (RAG engine)",
              "runs capital_rag_pipeline.py;\nindex, BM25 and graph held in RAM", PLATFORM,
-             tech="image pipelines:main\nport 9098 → 9099 · env OPENAI_API_KEY", size=9.4)
+             tech="image pipelines:main\nport 9099 (internal) · env OPENAI_API_KEY", size=9.4)
 v_data = box(22.5, 108, 15.5, 8.5, "open-webui-data/", "DB, uploads, settings", VOLUME,
              tech="→ /app/backend/data", size=9, dashed=True)
 v_pdfs = box(40, 108, 17.5, 8.5, "pdfs/", "index files + scripts", VOLUME,
