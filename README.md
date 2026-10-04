@@ -247,7 +247,17 @@ docker exec open-webui-pipelines-capital python /data/generate_start_suggestions
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 ```
 
-> `docker-compose.yaml` uses absolute Windows host paths for its volumes. Adjust them on other machines.
+### Deploying to a VPS
+
+Open WebUI only listens on `127.0.0.1:3000`. On a VPS, the `caddy` service (compose profile `vps`)
+is the public entry point: it serves `WEBUI_URL` over HTTPS with an automatic Let's Encrypt
+certificate and forwards to Open WebUI on the internal network ([`Caddyfile`](Caddyfile)).
+
+1. Point the domain's DNS A/AAAA record at the VPS; open ports 22, 80 and 443 in the firewall.
+2. In `.env` set `WEBUI_URL=https://your.domain` and `COMPOSE_PROFILES=vps`.
+3. Copy `pdfs/faiss_capital_index/` (and optionally `open-webui-data/`) to the VPS, then run `docker compose up -d --build`.
+
+> Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
 > The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
 ---
