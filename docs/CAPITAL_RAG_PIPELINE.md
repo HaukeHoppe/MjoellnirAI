@@ -58,7 +58,7 @@ The design follows from that:
 ```mermaid
 flowchart LR
     B[Browser<br/>localhost:3000] -->|HTTP| OW[open-webui<br/>container :8080]
-    OW -->|OpenAI-compatible<br/>chat request| PC[pipelines-capital<br/>container :9099<br/>host :9098]
+    OW -->|OpenAI-compatible<br/>chat request| PC[pipelines-capital<br/>container :9099<br/>not published]
     PC -->|embeddings, chat,<br/>structured output| OA[(OpenAI API)]
     PC ---|bind mount /data| IDX[(pdfs/faiss_capital_index/<br/>index.faiss, index.pkl,<br/>graph.json, summaries.json, ...)]
     PC ---|bind mount /app/pipelines| PY[pipelines-capital/<br/>capital_rag_pipeline.py]
@@ -74,8 +74,8 @@ flowchart LR
 - `OPENAI_API_KEY` comes from `.env` through `${OPENAI_API_KEY}` in the compose file.
 - Open WebUI's `PIPELINES_URL` points only at the climate pipelines server. **You have to add the capital
   server as a second connection yourself**: *Admin Panel → Settings → Connections → OpenAI API → +*
-  with URL `http://pipelines-capital:9099` and the Pipelines API key (the image default is
-  `0p3n-w3bu!`; change it for anything other than local use).
+  with URL `http://pipelines-capital:9099` and the Pipelines API key (`PIPELINES_API_KEY` from `.env`). The pipelines
+  ports are not published on the host, since the key allows uploading and running Python code.
 - In the model picker, the model appears as **"Capital Markets RAG"** with model id
   `capital_rag_pipeline`.
 
@@ -512,7 +512,7 @@ flowchart LR
 
 ```sh
 docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
-docker exec -w /app/backend open-webui sh -c 'WEBUI_SECRET_KEY="$(cat .webui_secret_key)" python /data/apply_start_suggestions.py'
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 # then reload the browser tab
 ```
 
@@ -571,7 +571,7 @@ Ingestion flags: `--index_dir`, `--chunks`, `--embedding_model`, `--llm_model`, 
 
 ```sh
 # first setup
-cp .env.example .env                       # set OPENAI_API_KEY
+cp .env.example .env                       # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
 # put extracted_v2_all.json into pdfs/faiss_capital_index/
 docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py

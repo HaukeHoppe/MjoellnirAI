@@ -12,15 +12,23 @@ services:
       dockerfile: Dockerfile.open-webui
     container_name: open-webui
 
+    # Localhost only: expose it publicly through a TLS reverse proxy or tunnel
+    # (Caddy, Cloudflare Tunnel, Tailscale), never as plain HTTP.
     ports:
-      - "3000:8080"
+      - "127.0.0.1:3000:8080"
 
     volumes:
       - ./pdfs:/data
       - ./open-webui-data:/app/backend/data
 
     environment:
-      - ENABLE_SIGNUP=true
+      # No public self-registration; new accounts (if signup is re-enabled) wait for admin approval.
+      # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
+      - ENABLE_SIGNUP=false
+      - DEFAULT_USER_ROLE=pending
+      # Fixed signing key so sessions survive container rebuilds; public URL for links and OAuth.
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env}
+      - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
       - PIPELINES_URL=http://pipelines:9099
 
     restart: always
@@ -41,8 +49,8 @@ services:
 
     container_name: open-webui-pipelines
 
-    ports:
-      - "9099:9099"
+    # No published ports: Open WebUI reaches the pipelines servers over the internal
+    # compose network. Anyone holding the API key can upload and run Python code here.
 
     volumes:
       - ./pdfs:/data
@@ -51,6 +59,7 @@ services:
       # Pipeline print() output (e.g. rejected claims) shows up in docker logs immediately.
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY:?set PIPELINES_API_KEY in .env}
 
     restart: always
 
@@ -59,7 +68,7 @@ services:
   # Open WebUI Pipelines #2 - Capital Markets RAG
   # Loads pipelines-capital/capital_rag_pipeline.py on startup.
   # Add in Open WebUI as a second connection:
-  #   http://pipelines-capital:9099  (key: 0p3n-w3bu!)
+  #   http://pipelines-capital:9099  (key: PIPELINES_API_KEY from .env)
   # =====================================================
 
   pipelines-capital:
@@ -68,9 +77,6 @@ services:
       dockerfile: Dockerfile.pipelines
 
     container_name: open-webui-pipelines-capital
-
-    ports:
-      - "9098:9099"
 
     volumes:
       - ./pdfs:/data

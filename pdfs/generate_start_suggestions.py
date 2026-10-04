@@ -9,7 +9,7 @@ next to the index; apply_start_suggestions.py puts them on the model in Open Web
 
 Run inside the pipelines-capital container (index at /data, pipeline at /app/pipelines):
     docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
-    docker exec -w /app/backend open-webui sh -c 'WEBUI_SECRET_KEY="$(cat .webui_secret_key)" python /data/apply_start_suggestions.py'
+    docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 """
 
 import argparse

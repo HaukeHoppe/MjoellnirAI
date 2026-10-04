@@ -53,7 +53,7 @@ flowchart LR
 | Component | What it is |
 |-----------|------------|
 | `open-webui` (port 3000) | Chat UI. The pipeline appears in the model picker as **Capital Markets RAG** |
-| `pipelines-capital` (port 9098 → 9099) | Open WebUI Pipelines server that loads [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) at startup |
+| `pipelines-capital` (internal port 9099, not published) | Open WebUI Pipelines server that loads [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) at startup |
 | `pdfs/faiss_capital_index/` | Index built offline by [`pdfs/ingest_capital_chunks.py`](pdfs/ingest_capital_chunks.py), mounted at `/data` (git-ignored) |
 | OpenAI | `text-embedding-3-large` for embeddings; `gpt-4o-mini` for grading and answering; `gpt-4o` for checking and revising |
 
@@ -229,7 +229,7 @@ by the model. Start-page suggestions are verified the same way
 ## Setup
 
 ```sh
-cp .env.example .env                 # set OPENAI_API_KEY
+cp .env.example .env                 # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
 
 # put extracted_v2_all.json into pdfs/faiss_capital_index/, then:
@@ -238,14 +238,13 @@ docker restart open-webui-pipelines-capital
 ```
 
 In Open WebUI (http://localhost:3000): **Admin Panel → Settings → Connections → OpenAI API → +**
-with URL `http://pipelines-capital:9099` and the Pipelines API key (image default `0p3n-w3bu!`; change it outside
-local use). Then select **Capital Markets RAG** in the model picker.
+with URL `http://pipelines-capital:9099` and the Pipelines API key (`PIPELINES_API_KEY` from `.env`). Then select **Capital Markets RAG** in the model picker.
 
 Optional start-page suggestions:
 
 ```sh
 docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
-docker exec -w /app/backend open-webui sh -c 'WEBUI_SECRET_KEY="$(cat .webui_secret_key)" python /data/apply_start_suggestions.py'
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 ```
 
 > `docker-compose.yaml` uses absolute Windows host paths for its volumes. Adjust them on other machines.
