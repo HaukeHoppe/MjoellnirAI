@@ -247,7 +247,7 @@ docker exec open-webui-pipelines-capital python /data/generate_start_suggestions
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 ```
 
-> `docker-compose.yaml` uses absolute Windows host paths for its volumes. Adjust them on other machines.
+> Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
 > The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
 ---
