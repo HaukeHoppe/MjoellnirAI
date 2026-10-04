@@ -254,7 +254,8 @@ is the public entry point: it serves `WEBUI_URL` over HTTPS with an automatic Le
 certificate and forwards to Open WebUI on the internal network ([`Caddyfile`](Caddyfile)).
 
 1. Point the domain's DNS A/AAAA record at the VPS; open ports 22, 80 and 443 in the firewall.
-2. In `.env` set `WEBUI_URL=https://your.domain` and `COMPOSE_PROFILES=vps`.
+2. In `.env` set `WEBUI_URL=https://your.domain`, `CORS_ALLOW_ORIGIN=https://your.domain` (no trailing slash),
+   `ACME_EMAIL=<real address>` and `COMPOSE_PROFILES=vps`.
 3. Copy `pdfs/faiss_capital_index/` (and optionally `open-webui-data/`) to the VPS, then run `docker compose up -d --build`.
 
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.

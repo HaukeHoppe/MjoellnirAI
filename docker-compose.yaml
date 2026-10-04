@@ -29,6 +29,9 @@ services:
       # Fixed signing key so sessions survive container rebuilds; public URL for links and OAuth.
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env}
       - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
+      # Only these origins may call the API and open the chat websocket (default '*' = any website).
+      # Must match the browser address exactly: scheme + host, no trailing slash; separate several with ';'.
+      - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
       - PIPELINES_URL=http://pipelines:9099
 
     restart: always
