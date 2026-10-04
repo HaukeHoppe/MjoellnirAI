@@ -12,6 +12,10 @@
 {$WEBUI_URL} {
 	encode zstd gzip
 
+	# Private instance: keep it out of search engines. Open WebUI's robots.txt already
+	# disallows crawling; this header also covers bots that skip robots.txt.
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+
 	# Chat streaming (SSE) and websockets are proxied without extra config.
 	reverse_proxy open-webui:8080
 }
