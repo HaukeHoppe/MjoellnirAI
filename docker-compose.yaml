@@ -20,7 +20,10 @@ services:
       - ./open-webui-data:/app/backend/data
 
     environment:
-      - ENABLE_SIGNUP=true
+      # No public self-registration; new accounts (if signup is re-enabled) wait for admin approval.
+      # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
+      - ENABLE_SIGNUP=false
+      - DEFAULT_USER_ROLE=pending
       - PIPELINES_URL=http://pipelines:9099
 
     restart: always
