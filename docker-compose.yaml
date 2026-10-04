@@ -110,8 +110,10 @@ services:
       - caddy-config:/config
 
     environment:
-      - WEBUI_URL=${WEBUI_URL:?set WEBUI_URL in .env}
-      - ACME_EMAIL=${ACME_EMAIL:?set ACME_EMAIL in .env}
+      # Not ":?"-required: compose checks variables of inactive profiles too, which would break
+      # every local command. If either is empty, Caddy refuses to start and names the line.
+      - WEBUI_URL=${WEBUI_URL:-}
+      - ACME_EMAIL=${ACME_EMAIL:-}
 
     restart: always
 
