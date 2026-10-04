@@ -12,8 +12,10 @@ services:
       dockerfile: Dockerfile.open-webui
     container_name: open-webui
 
+    # Localhost only: expose it publicly through a TLS reverse proxy or tunnel
+    # (Caddy, Cloudflare Tunnel, Tailscale), never as plain HTTP.
     ports:
-      - "3000:8080"
+      - "127.0.0.1:3000:8080"
 
     volumes:
       - ./pdfs:/data
