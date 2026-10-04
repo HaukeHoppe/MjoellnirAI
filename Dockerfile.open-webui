@@ -1,4 +1,5 @@
-FROM ghcr.io/open-webui/open-webui:main
+# Pinned release; bump deliberately after reading the release notes.
+FROM ghcr.io/open-webui/open-webui:v0.11.4
 
 COPY requirements.txt /tmp/requirements.txt
 
