@@ -85,3 +85,39 @@ services:
     environment: *pipelines_env
 
     restart: always
+
+
+  # =====================================================
+  # Caddy - HTTPS reverse proxy (VPS only)
+  # Only starts with the "vps" profile: set COMPOSE_PROFILES=vps in the VPS .env.
+  # Serves WEBUI_URL with an automatic Let's Encrypt certificate and forwards
+  # to open-webui:8080 over the internal network. See Caddyfile.
+  # =====================================================
+
+  caddy:
+    image: caddy:2.11-alpine
+    container_name: caddy
+    profiles: ["vps"]
+
+    ports:
+      - "80:80"         # ACME HTTP challenge + redirect to HTTPS
+      - "443:443"       # HTTPS
+      - "443:443/udp"   # HTTP/3
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data       # certificates and ACME account; keep it to avoid Let's Encrypt rate limits
+      - caddy-config:/config
+
+    environment:
+      - WEBUI_URL=${WEBUI_URL:?set WEBUI_URL in .env}
+
+    restart: always
+
+    depends_on:
+      - open-webui
+
+
+volumes:
+  caddy-data:
+  caddy-config:

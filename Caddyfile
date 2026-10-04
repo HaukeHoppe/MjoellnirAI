@@ -1,0 +1,11 @@
+# HTTPS entry point for Open WebUI on a VPS (compose profile "vps").
+# The site address is WEBUI_URL from .env, e.g. https://chat.example.com. Caddy obtains and
+# renews a Let's Encrypt certificate for that domain automatically and redirects HTTP to HTTPS.
+# Requirements: the domain's DNS A/AAAA record points at the VPS, ports 80 and 443 are open.
+
+{$WEBUI_URL} {
+	encode zstd gzip
+
+	# Chat streaming (SSE) and websockets are proxied without extra config.
+	reverse_proxy open-webui:8080
+}
