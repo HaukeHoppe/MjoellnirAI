@@ -275,6 +275,11 @@ reachable through an SSH tunnel:
 
 Set a spending limit on the OpenAI key: anyone can now use it through the chat.
 
+**Site password.** Until the site has an Impressum and Datenschutzerklärung, Caddy shows a browser password
+prompt before anything of Open WebUI loads. Set `SITE_USER` and `SITE_PASSWORD_HASH` (from
+`docker exec caddy caddy hash-password --plaintext '<password>'`, in single quotes) in the VPS `.env`.
+To open the site publicly, delete the `basic_auth` lines in the [`Caddyfile`](Caddyfile) and reload Caddy.
+
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
 > The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
