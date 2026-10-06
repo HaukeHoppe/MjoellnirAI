@@ -33,6 +33,8 @@ services:
       # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
       - ENABLE_SIGNUP=false
       - DEFAULT_USER_ROLE=pending
+      # Site name in the browser tab and the UI. Open WebUI appends " (Open WebUI)" to any custom name.
+      - WEBUI_NAME=Capital Markets RAG
       # VPS: signs every request in as the account whose email is in this header. Caddy sets it
       # (guest user on WEBUI_URL, admin on the SSH-tunnel port), so visitors see no login screen.
       # Empty locally = normal login. With it set, a request without the header cannot log in.
