@@ -1,5 +1,12 @@
 version: '3.8'
 
+# On the VPS (LOG_DRIVER=journald) container logs go to the host's systemd journal, which deletes entries
+# older than 14 days (MaxRetentionSec in /etc/systemd/journald.conf.d/, see README). The privacy policy
+# promises this deletion period: the logs contain visitor IP addresses and model output derived from chats.
+# Locally the Docker default (json-file) stays, since Docker Desktop has no journald.
+x-logging: &logging
+  driver: ${LOG_DRIVER:-json-file}
+
 services:
 
   # =====================================================
@@ -39,6 +46,7 @@ services:
       - PIPELINES_URL=http://pipelines:9099
 
     restart: always
+    logging: *logging
 
     depends_on:
       - pipelines
@@ -69,6 +77,7 @@ services:
       - PIPELINES_API_KEY=${PIPELINES_API_KEY:?set PIPELINES_API_KEY in .env}
 
     restart: always
+    logging: *logging
 
 
   # =====================================================
@@ -92,6 +101,7 @@ services:
     environment: *pipelines_env
 
     restart: always
+    logging: *logging
 
 
   # =====================================================
@@ -131,6 +141,7 @@ services:
       - SITE_PASSWORD_HASH=${SITE_PASSWORD_HASH:-}
 
     restart: always
+    logging: *logging
 
     depends_on:
       - open-webui
