@@ -29,9 +29,30 @@ div.select-none:has(#sidebar-new-chat-button) {
 	}
 }
 
-/* Start-page suggestions are long cause -> effect questions: up to three lines instead of one, so they are
-   not cut off with "…" on phones. */
+/* Start-page suggestions are full cause -> effect questions: up to five lines instead of one, so they are
+   shown completely, never cut off with "…" (the longest is about three lines on a phone). */
 button.waterfall .line-clamp-1 {
-	-webkit-line-clamp: 3 !important;
-	line-clamp: 3 !important;
+	-webkit-line-clamp: 5 !important;
+	line-clamp: 5 !important;
+}
+
+/* The suggestion list has a fixed height (h-36 / max-h-36) and scrolls; with three full questions that hides
+   the last one on phones. The list grows with its content instead. */
+div.h-36:has(button.waterfall),
+div.max-h-36:has(> button.waterfall) {
+	height: auto !important;
+	max-height: none !important;
+	overflow: visible !important;
+}
+
+/* Room below the list, so its last line never sits under the fixed legal footer. */
+div.h-36:has(button.waterfall) {
+	padding-bottom: 1.5rem !important;
+}
+
+/* Very short screens: the questions stay complete, only the short chain hints under them are hidden. */
+@media (max-height: 700px) {
+	button.waterfall .text-xs {
+		display: none !important;
+	}
 }
