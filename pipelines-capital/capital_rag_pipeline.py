@@ -28,6 +28,10 @@ class Grade(BaseModel):
     supports_answer: bool = Field(
         ..., description="True only if the document directly helps answer the question."
     )
+    states_step: bool = Field(
+        ...,
+        description="True if the document states at least one cause -> effect link of the chain the question asks about, even if it does not answer the whole question.",
+    )
     reason: str = Field(
         ..., description="One short sentence, in the language of the question, why."
     )
@@ -64,6 +68,17 @@ class AnswerCheck(BaseModel):
     claims: List[Claim] = Field(default_factory=list)
 
 
+class Corroboration(BaseModel):
+    line: int = Field(..., description="Number of the answer line (L<n>) the fact is stated in.")
+    block: int = Field(..., description="Number of a further block that states the same.")
+    quote: str = Field(..., description="Verbatim sentence from that block stating it.")
+    same_statement: bool = Field(..., description="True if the quote states the same cause, effect and certainty.")
+
+
+class Corroborations(BaseModel):
+    items: List[Corroboration] = Field(default_factory=list)
+
+
 class Suggestion(BaseModel):
     topic: int = Field(..., description="Number of the topic in the list.")
     label: str = Field(..., description="Short topic name in the language of the user's question.")
@@ -95,6 +110,7 @@ Consider the specific intent of the question, not just keyword or topic overlap.
 
 relevance: 0-10.
 supports_answer: true only if the document contains information that directly helps answer the question.
+states_step: true if the document states at least one cause -> effect link that belongs to the chain the question asks about - the trigger, an intermediate step or the final effect (e.g. for "How can a rate decision in Japan hit US tech stocks?": a document stating that Japan's low rates lead to borrowing in yen, or that rising rates lower stock valuations). It does not need to answer the whole question. False for documents that only share the topic or keywords without stating such a link.
 reason: one short sentence in the language of the question.
 
 Question: {question}
@@ -120,6 +136,7 @@ Mechanism questions (why / how / what happens if) are answered as a chain, as lo
 No introduction or summary sentence that links the trigger directly to the final effect - the steps make that link.
 Phrase each step close to the wording of its block and give only the reason the block gives; do not add reasons, actors or effects of your own.
 The context may start with "Causal paths": chains of relations found across the sources, each step with the blocks that state it. Use them to find and order the steps; every step still needs its block citation. Other questions are answered in normal prose.
+Build the chain from all blocks, not only from the block that covers the most: cite every block that states a step (e.g. [1][3]), and take a step from another block when it is stated there but missing in the block that covers the most.
 
 The context blocks come from the indexed capital-markets sources (each block label names its source) and come in two kinds:
 - CONCEPT blocks are timeless explanations. You may state them as general explanations.
@@ -152,6 +169,23 @@ A statement that merges different views from different sources into one is unsup
 
 claim_cause / quote_cause / same_cause: for every claim that states a cause -> effect, write down the cause the claim names and the cause the quote gives for the same effect, then set same_cause. Example: claim "Sinkende Zinsen steigern die Nachfrage nach Anleihen", quote "Wenn Investoren Vertrauen zurückgewinnen, ... steigt die Nachfrage" -> claim_cause "sinkende Zinsen", quote_cause "Vertrauen der Investoren", same_cause false.
 answer_sentence: the sentence of the answer the claim was taken from, copied verbatim (before you rewrote the claim).
+
+Context:
+{context}
+
+Answer:
+{answer}"""
+
+CORROBORATE_PROMPT = """Below is a checked answer with citations [n], split into numbered lines (L1, L2, ...), and the context blocks it was written from.
+For every line of the answer that states a fact, look for OTHER blocks (not already cited in that line) that state the same fact themselves.
+
+For each such block:
+- line: the number of the answer line.
+- block: the number of the further block.
+- quote: copy, character for character, ONE sentence from that block that states the fact.
+- same_statement: true only if the quote states the same cause, the same effect and the same degree of certainty as a statement in that line. A block that only shares the topic, names a different cause or states a different effect does not count.
+
+Return only blocks that really state the fact. Returning nothing is fine.
 
 Context:
 {context}
@@ -464,6 +498,11 @@ class Pipeline:
         # answer is given. Disabling this streams the unchecked answer directly.
         CHECK_ANSWER_GROUNDING: bool = True
         MAX_REVISIONS: int = 2
+        # After the check: further blocks that state the same as an answer sentence are cited there too, so a
+        # step backed by several sources shows all of them. Each added citation needs a verbatim quote from
+        # exactly that block; opinion blocks are not added (they would need a source attribution).
+        CORROBORATE: bool = True
+        CORROBORATE_MAX_PER_LINE: int = 2
         # Progress is shown as one status line that updates step by step. This
         # additionally writes the full step log (incl. rejected claims) into a
         # collapsible "thinking" block - useful for debugging.
@@ -501,6 +540,7 @@ class Pipeline:
         self.reviser = None
         self.grader = None
         self.checker = None
+        self.corroborator = None
 
     def _load(self):
         # Loads the index built by ingest_capital_chunks.py. Does NOT run ingestion.
@@ -528,6 +568,7 @@ class Pipeline:
         self.grader = grader_llm.with_structured_output(Grade)
         check_llm = ChatOpenAI(model=self.valves.CHECK_MODEL, temperature=0)
         self.checker = check_llm.with_structured_output(AnswerCheck)
+        self.corroborator = check_llm.with_structured_output(Corroborations)
         self.explorer = grader_llm.with_structured_output(Suggestions)
         self.concept_extractor = grader_llm.with_structured_output(QueryConcepts)
         # Revisions use the stronger model too: gpt-4o-mini tended to keep the
@@ -761,8 +802,10 @@ class Pipeline:
                 continue
             if grade.supports_answer and grade.relevance >= self.valves.MIN_RELEVANCE:
                 kept.append((doc, grade, fused))
-            elif chunk_id in path_ids and grade.relevance >= self.valves.CHAIN_MIN_RELEVANCE:
-                # A step of a causal path: relevant as a link even if it alone does not answer.
+            elif (chunk_id in path_ids or grade.states_step) and grade.relevance >= self.valves.CHAIN_MIN_RELEVANCE:
+                # A step of the asked chain (from the graph's causal paths or as judged by the grader):
+                # relevant as a link even if it alone does not answer, so a chain can be built from several
+                # sources instead of the one block that covers the most.
                 steps.append((doc, grade, fused))
         kept.sort(key=lambda hit: (hit[1].relevance, hit[2]), reverse=True)
         steps.sort(key=lambda hit: hit[1].relevance, reverse=True)
@@ -919,6 +962,32 @@ class Pipeline:
             unsupported.append(f"{claim.claim} ({problem})")
             sentences.append(claim.answer_sentence)
         return unsupported, has_facts, sentences
+
+    def _corroborate(self, answer: str, context: str, blocks: List[dict]) -> tuple:
+        # Cites further blocks in lines of the checked answer (a chain step is one line) when they state the
+        # same. Accepted only if the line cites something already, the block is a concept block not yet cited
+        # there, and the quote really is in that block. Returns the answer and the number added.
+        lines = answer.split("\n")
+        numbered = "\n".join(f"L{i}: {line}" for i, line in enumerate(lines, start=1) if line.strip())
+        found = self.corroborator.invoke(CORROBORATE_PROMPT.format(context=context, answer=numbered))
+        added = {}
+        for item in found.items:
+            if not (item.same_statement and 1 <= item.line <= len(lines) and 1 <= item.block <= len(blocks)):
+                continue
+            line, block = lines[item.line - 1], blocks[item.block - 1]
+            new = added.get(item.line, set())
+            cited = cited_numbers(line, len(blocks))
+            if (not cited or item.block in cited | new or block["opinion"]
+                    or len(new) >= self.valves.CORROBORATE_MAX_PER_LINE
+                    or not quote_in_context(item.quote, block["text"])):
+                continue
+            added.setdefault(item.line, set()).add(item.block)
+        for number, blocks_added in added.items():
+            # The new citations go right after the line's last citation group.
+            line = lines[number - 1]
+            last = list(re.finditer(r"\[\d+(?:\s*,\s*\d+)*\]", line))[-1]
+            lines[number - 1] = line[: last.end()] + "".join(f"[{n}]" for n in sorted(blocks_added)) + line[last.end():]
+        return "\n".join(lines), sum(len(n) for n in added.values())
 
     def _grounded_answer(self, question: str, context: str, blocks: List[dict]) -> Iterator[tuple]:
         # Yields ("status", short, detail) progress steps and finally
@@ -1167,6 +1236,15 @@ class Pipeline:
             if not has_facts:
                 # The answer only says the sources don't cover the question.
                 suggestions = yield from find_related("Die Quellen beantworten die Frage nicht")
+            elif self.valves.CORROBORATE and len(blocks) > 1:
+                yield from step("Suche weitere Belege in den anderen Quellen …")
+                try:
+                    answer, added = self._corroborate(answer, context, blocks)
+                    if added:
+                        yield from step(f"{added} weitere Beleg(e) aus anderen Quellen ergänzt")
+                except Exception as e:
+                    # Only adds citations: on failure the checked answer stays as it is.
+                    print(f"[capital_rag] Corroboration failed: {e}")
             cited = cited_numbers(answer, len(grounded))
             yield from step(f"Antwort geprüft ✓ ({len(cited)} Quellen)", done=True)
             yield from close_log()
