@@ -28,6 +28,10 @@ class Grade(BaseModel):
     supports_answer: bool = Field(
         ..., description="True only if the document directly helps answer the question."
     )
+    states_step: bool = Field(
+        ...,
+        description="True if the document states at least one cause -> effect link of the chain the question asks about, even if it does not answer the whole question.",
+    )
     reason: str = Field(
         ..., description="One short sentence, in the language of the question, why."
     )
@@ -95,6 +99,7 @@ Consider the specific intent of the question, not just keyword or topic overlap.
 
 relevance: 0-10.
 supports_answer: true only if the document contains information that directly helps answer the question.
+states_step: true if the document states at least one cause -> effect link that belongs to the chain the question asks about - the trigger, an intermediate step or the final effect (e.g. for "How can a rate decision in Japan hit US tech stocks?": a document stating that Japan's low rates lead to borrowing in yen, or that rising rates lower stock valuations). It does not need to answer the whole question. False for documents that only share the topic or keywords without stating such a link.
 reason: one short sentence in the language of the question.
 
 Question: {question}
@@ -120,6 +125,7 @@ Mechanism questions (why / how / what happens if) are answered as a chain, as lo
 No introduction or summary sentence that links the trigger directly to the final effect - the steps make that link.
 Phrase each step close to the wording of its block and give only the reason the block gives; do not add reasons, actors or effects of your own.
 The context may start with "Causal paths": chains of relations found across the sources, each step with the blocks that state it. Use them to find and order the steps; every step still needs its block citation. Other questions are answered in normal prose.
+Build the chain from all blocks, not only from the block that covers the most. Even if one block describes the whole chain, read the other blocks: cite every block that states a step (e.g. [1][3]), and use them for links that block leaves out, such as the link from the trigger named in the question to the first step, or from the last step to the effect asked about.
 
 The context blocks come from the indexed capital-markets sources (each block label names its source) and come in two kinds:
 - CONCEPT blocks are timeless explanations. You may state them as general explanations.
@@ -761,8 +767,10 @@ class Pipeline:
                 continue
             if grade.supports_answer and grade.relevance >= self.valves.MIN_RELEVANCE:
                 kept.append((doc, grade, fused))
-            elif chunk_id in path_ids and grade.relevance >= self.valves.CHAIN_MIN_RELEVANCE:
-                # A step of a causal path: relevant as a link even if it alone does not answer.
+            elif (chunk_id in path_ids or grade.states_step) and grade.relevance >= self.valves.CHAIN_MIN_RELEVANCE:
+                # A step of the asked chain (from the graph's causal paths or as judged by the grader):
+                # relevant as a link even if it alone does not answer, so a chain can be built from several
+                # sources instead of the one block that covers the most.
                 steps.append((doc, grade, fused))
         kept.sort(key=lambda hit: (hit[1].relevance, hit[2]), reverse=True)
         steps.sort(key=lambda hit: hit[1].relevance, reverse=True)
