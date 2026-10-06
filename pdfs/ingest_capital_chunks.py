@@ -224,8 +224,8 @@ Write ONE canonical explanation in German that combines them.
 
 
 def video_of(source: str) -> str:
-    # "Live-Replay [948589646] (de-x-autogen) #1" -> "Live-Replay [948589646] (de-x-autogen)"
-    # "Grundlagen-Webinar Tradingview(1)_transcript #3" -> "Grundlagen-Webinar Tradingview(1)_transcript"
+    # "Marktgespräch [123456789] (de-x-autogen) #1" -> "Marktgespräch [123456789] (de-x-autogen)"
+    # "Marktkommentar Mai 2026_transcript #3" -> "Marktkommentar Mai 2026_transcript"
     return re.sub(r"\s*#\d+$", "", source)
 
 
