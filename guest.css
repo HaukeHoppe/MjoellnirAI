@@ -1,0 +1,14 @@
+/* Served by Caddy as /static/custom.css on the public site only (the admin entrance gets Open WebUI's own).
+   Visitors share one guest account, so they get no account UI. Open WebUI has no setting for this. */
+
+/* User menu (Settings, Archived Chats, Sign Out): every trigger shows the user's profile picture.
+   Matched by the image URL rather than the aria-label, which changes with the UI language. */
+button:has(img[src*="/users/"][src*="/profile/image"]) {
+	display: none !important;
+}
+
+/* Green success toasts, mainly "You're now logged in." after the automatic sign-in on every visit.
+   Errors and warnings still show. */
+[data-sonner-toast][data-type='success'] {
+	display: none !important;
+}

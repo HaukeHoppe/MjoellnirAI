@@ -270,7 +270,8 @@ reachable through an SSH tunnel:
    *Temporary Chat Enforced* (nothing saved, guests do not see each other's chats) and switch off what guests
    should not use (file upload, voice, chat controls/valves/system prompt, share/export/import, notes, channels,
    folders, memories, calendar, web search, image generation, code interpreter, interface settings).
-   Caddy already rejects profile and password changes for the guest account.
+   Caddy already rejects profile and password changes for the guest account, and serves [`guest.css`](guest.css)
+   to visitors, which hides the user menu (settings, sign out) and the "You're now logged in" toast.
 
 Set a spending limit on the OpenAI key: anyone can now use it through the chat.
 

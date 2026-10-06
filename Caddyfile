@@ -31,6 +31,14 @@
 	@guest_account path /api/v1/auths/update/profile /api/v1/auths/update/password
 	respond @guest_account "Not available for the guest account" 403
 
+	# Open WebUI loads /static/custom.css on every page; visitors get guest.css instead, which hides the
+	# user menu (settings, sign out) and the "You're now logged in" toast.
+	handle /static/custom.css {
+		root * /etc/caddy
+		rewrite * /guest.css
+		file_server
+	}
+
 	# No login for visitors: every request is signed in as the shared guest account (role "user",
 	# no admin rights). header_up overwrites any value the client sends, so it cannot be forged.
 	# Chat streaming (SSE) and websockets are proxied without extra config.
