@@ -258,6 +258,17 @@ certificate and forwards to Open WebUI on the internal network ([`Caddyfile`](Ca
    `ACME_EMAIL=<real address>` and `COMPOSE_PROFILES=vps`.
 3. Copy `pdfs/faiss_capital_index/` (and optionally `open-webui-data/`) to the VPS, then run `docker compose up -d --build`.
 
+**Open access without login (optional).** Caddy can sign every visitor in automatically as one shared guest
+account with role `user` (no admin rights; guests share its chat history), while the admin account is only
+reachable through an SSH tunnel:
+
+1. As admin, create the guest account (Admin Panel → Users, role `user`) and make the models **Public**.
+2. In the VPS `.env` set `WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Webui-Email`, `GUEST_EMAIL=<guest account email>`,
+   `ADMIN_EMAIL=<your admin email>` and append `;http://localhost:8081` to `CORS_ALLOW_ORIGIN`; then `docker compose up -d`.
+3. Admin access: `ssh -L 8081:127.0.0.1:8081 <vps>`, then open `http://localhost:8081`.
+
+Set a spending limit on the OpenAI key: anyone can now use it through the chat.
+
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
 > The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
