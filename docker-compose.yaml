@@ -126,6 +126,8 @@ services:
       - ACME_EMAIL=${ACME_EMAIL:-}
       - GUEST_EMAIL=${GUEST_EMAIL:-}
       - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+      - SITE_USER=${SITE_USER:-}
+      - SITE_PASSWORD_HASH=${SITE_PASSWORD_HASH:-}
 
     restart: always
 
