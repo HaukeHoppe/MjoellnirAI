@@ -69,16 +69,17 @@ flowchart TD
     Q[User question] --> R["1. Hybrid retrieval<br/>dense vectors + BM25, fused 60/40<br/>→ top 12"]
     R --> GX["2. Graph expansion<br/>+ ≤ 4 chunks asserting the same cause → effect"]
     GX --> CS["2b. Causal chain search<br/>question causes/effects → graph concepts,<br/>paths of ≤ 4 steps, + chunks stating each step"]
-    CS --> GR["3. LLM relevance gate<br/>supports_answer AND relevance ≥ 6/10 → top 6<br/>+ chain steps with relevance ≥ 4 → top 6"]
+    CS --> GR["3. LLM relevance gate<br/>supports_answer AND relevance ≥ 6/10 → top 6<br/>+ chunks stating a step of the chain<br/>(graph path or grader) with relevance ≥ 4 → top 6"]
     GR -->|nothing passes| NA[Refuse + suggest related topics]
     GR --> CTX["4. Context blocks labelled<br/>CONCEPT / OPINION, TIMELESS / TIME-BOUND"]
     CTX --> GEN["5. Generate answer (gpt-4.1)<br/>context only, cite every statement;<br/>mechanisms as numbered chain steps"]
     GEN --> CHK["6. Check every claim<br/>gpt-4o + code-side quote, cause<br/>and attribution checks"]
-    CHK -->|all supported| OUT["Answer + cited sources<br/>with relevance reasons"]
+    CHK -->|all supported| COR["7. Corroborate<br/>cite further concept blocks that state<br/>the same step (verbatim quote checked)"]
+    COR --> OUT["Answer + cited sources<br/>with relevance reasons"]
     CHK -->|problems| REV["Targeted revision<br/>max 2 rounds"]
     REV --> CHK
     CHK -->|still failing| TRIM["Remove flagged sentences,<br/>check again"]
-    TRIM -->|clean| OUT
+    TRIM -->|clean| COR
     TRIM -->|not clean| NA
 ```
 
@@ -94,6 +95,10 @@ flowchart TD
    of certainty, add no new cause → effect links, cite `[n]` everywhere and attribute every opinion to its video.
 6. **Verification:** the answer is **not streamed**. It is checked claim by claim and only then shown. A live status
    line ("Durchsuche die Quellen …", "Prüfe jede Aussage gegen die Quellen …") covers the wait.
+7. **Corroboration:** a step one block covers is often stated by other blocks too. gpt-4o names them with a verbatim
+   quote per answer line; the code accepts a block only if the quote really is in that block, the line already
+   cites a source and the block is a concept block. Its number is then added to that line (`[1][3]`), so a chain
+   shows all the sources that back it instead of only the one chain text that covers the most.
 
 The output lists **only the sources the answer actually cites**, each marked *Konzept*, *Zusammenfassung* or
 *Meinung (zeitgebunden)*, with the grader's reason for using it.
@@ -334,6 +339,7 @@ Valves are edited in **Admin Panel → Settings → Pipelines**. The pipeline re
 | `CANDIDATE_K` · `GRAPH_SEED_K` · `GRAPH_EXPAND_K` | 12 · 3 · 4 | Candidate pool and graph expansion |
 | `MIN_RELEVANCE` · `TOP_K` | 6 · 5 | Relevance gate and context size |
 | `CHECK_ANSWER_GROUNDING` · `MAX_REVISIONS` | `True` · 2 | Claim check and revision rounds |
+| `CORROBORATE` · `CORROBORATE_MAX_PER_LINE` | `True` · 2 | After the check, cite further blocks stating the same step |
 | `SHOW_THINKING_LOG` | `False` | Full step log including rejected claims in the chat |
 | `EXPLORE_MODE` · `EXPLORE_SUGGESTIONS` · `EXPLORE_MIN_CHUNKS` | `True` · 4 · 2 | Related-topic suggestions |
 
