@@ -109,7 +109,7 @@ with the rest of the index directory. Each element is one chunk:
 | `conditions` | str | Shown in the context block |
 | `evidence` | str | Stored in metadata |
 | `market_domain` | list[str] | Start-suggestion diversity |
-| `sources` | list[str] | Video labels such as `"Live-Replay [948589646] (de-x-autogen) #1"` |
+| `sources` | list[str] | Video labels such as `"Marktkommentar Mai 2026 #4"` or `"Marktgespräch [123456789] (de-x-autogen) #1"` |
 
 The video label format matters. `parse_video()` / `cite_source()` read
 `Title [numeric-id] (lang) #n` or `Title_transcript #n` from it, to attribute opinions and to check
@@ -302,7 +302,7 @@ This combines LLM reranking (`reranking.py`) with the relevance gate from reliab
 Each kept chunk becomes a numbered block:
 
 ```
-[2] Zinsen und Anleihepreise - OPINION (time-bound, stated in: Exklusiver Marktausblick_ Mai 2026 [123] #4)
+[2] Zinsen und Anleihepreise - OPINION (time-bound, stated in: Marktkommentar Mai 2026 #4)
 <chunk content>
 Relation [TIMELESS]: Leitzins -> Anleihepreise (negative, medium-term): Steigende Zinsen drücken ...
 Relation [TIME-BOUND]: EZB -> Zinsen (down, short-term): Er erwartet ... Conditions: ...

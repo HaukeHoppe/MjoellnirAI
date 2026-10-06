@@ -100,7 +100,7 @@ Stay faithful to the wording of the sources:
 
 The context blocks are from videos by one capital-markets creator and come in two kinds:
 - CONCEPT blocks are timeless explanations. You may state them as general explanations.
-- OPINION blocks are time-bound views, forecasts or positioning as stated in the named video. Always attribute them to that video in the same paragraph, using the video title exactly as written in the block label without the [id] and #n (e.g. "Im Video Exklusiver Marktausblick_ Mai 2026 schätzte er ... ein"). Never present them as current facts or as a current recommendation.
+- OPINION blocks are time-bound views, forecasts or positioning as stated in the named video. Always attribute them to that video in the same paragraph, using the video title exactly as written in the block label without the [id] and #n (e.g. "Im Video Marktkommentar Mai 2026 schätzte er ... ein"). Never present them as current facts or as a current recommendation.
 - Exception: a "Relation [TIMELESS]" line is a general mechanism, even inside an OPINION block. You may state it as a general explanation. Everything else in an OPINION block, including "Relation [TIME-BOUND]" lines, must be attributed to its video.
 - If opinion blocks from different videos disagree, show each view with its video and say that they differ. Do not merge them into one view, and do not end with a summary or conclusion that combines views from different videos.
 
@@ -245,8 +245,8 @@ def video_key(text: str) -> str:
 
 
 def parse_video(source: str) -> tuple:
-    # "Live-Replay [948589646] (de-x-autogen) #1" -> ("Live-Replay", "948589646")
-    # "Grundlagen-Webinar Tradingview(1)_transcript #3" -> ("Grundlagen-Webinar Tradingview(1)", "")
+    # "Marktgespräch [123456789] (de-x-autogen) #1" -> ("Marktgespräch", "123456789")
+    # "Marktkommentar Mai 2026_transcript #3" -> ("Marktkommentar Mai 2026", "")
     match = re.match(r"^(.*?)\s*\[(\d+)\]", source)
     if match:
         return (match.group(1), match.group(2))
@@ -325,8 +325,8 @@ def tokenize(text: str) -> List[str]:
 
 
 def cite_source(source: str) -> str:
-    # "Live-Replay [948589646] (de-x-autogen) #1" -> "Live-Replay [948589646] #1"
-    # "Grundlagen-Webinar Tradingview(1)_transcript #3" -> "Grundlagen-Webinar Tradingview(1) #3"
+    # "Marktgespräch [123456789] (de-x-autogen) #1" -> "Marktgespräch [123456789] #1"
+    # "Marktkommentar Mai 2026_transcript #3" -> "Marktkommentar Mai 2026 #3"
     source = re.sub(r"_transcript(\s*#\d+)$", r"\1", source)
     return re.sub(r"\s+\([^)]*\)(\s*#\d+)$", r"\1", source)
 

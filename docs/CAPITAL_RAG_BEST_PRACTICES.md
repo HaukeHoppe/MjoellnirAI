@@ -502,10 +502,10 @@ domains, and kept only if the grader confirms the summary answers them.
 | Fusion | Top 12, mixing concept explanations and two outlook chunks |
 | Graph | The top seed asserts `Leitzins → Anleihepreise (negative)`. 3 more chunks with that relation from other videos are added → 15 |
 | Grading | 15 graded in parallel. 5 kept: a summary on rates and bonds (support 4), 2 concept chunks, 2 opinion chunks from different outlook videos |
-| Context | `[1]` CONCEPT summary … `[4]` OPINION (Marktausblick Mai 2026) … `[5]` OPINION (Marktausblick Juli 2026) |
+| Context | `[1]` CONCEPT summary … `[4]` OPINION (Marktkommentar Mai 2026) … `[5]` OPINION (Marktkommentar Juli 2026) |
 | Draft | Explains the mechanism from [1][2], then gives the two outlook views with their videos, and adds "da Inflation sinkt" |
 | Check | "da Inflation sinkt" has no quote in the context → *not stated*. The Juli view is in a paragraph without the video title → *missing attribution* |
-| Revise | The reason is deleted and "Im Video Marktausblick Juli 2026 …" is added |
+| Revise | The reason is deleted and "Im Video Marktkommentar Juli 2026 …" is added |
 | Re-check | All claims are quoted, causes match, opinions are attributed ✓ |
 | Output | Answer + `Quellen:` with 4 cited blocks (labelled Konzept / Meinung, with grader reasons). Block [3] was not cited, so it is not listed |
 | Follow-ups | The background task arrives → explorer suggests e.g. "Duration" and "Renditekurve", each verified against its excerpt |
