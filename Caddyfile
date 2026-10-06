@@ -4,6 +4,9 @@
 # Requirements: the domain's DNS A/AAAA record points at the VPS, ports 80 and 443 are open.
 
 {
+	# replace (plugin, see Dockerfile.caddy) runs after encode, so it sees the uncompressed page.
+	order replace after encode
+
 	# With an email set, Caddy falls back from Let's Encrypt to ZeroSSL when Let's Encrypt
 	# refuses (e.g. its 50-certificates-per-domain limit on shared hoster domains).
 	email {$ACME_EMAIL}
@@ -60,6 +63,22 @@
 		root * /etc/caddy
 		rewrite * /guest.css
 		file_server
+	}
+
+	# Legal footer on every Open WebUI page: Open WebUI shows its banner only on the empty start screen, but
+	# Impressum and Datenschutz must stay reachable during a chat too. Only page loads (Sec-Fetch-Dest:
+	# document) are rewritten, never API or streaming responses. Accept-Encoding is dropped so Open WebUI
+	# sends the page uncompressed for the replacement; Caddy's encode compresses it for the browser.
+	@page {
+		header Sec-Fetch-Dest document
+		not path /impressum /datenschutz
+	}
+	handle @page {
+		replace "</body>" `<div id="legal-footer" style="position:fixed;right:10px;bottom:4px;z-index:9999;font:11px/1.4 system-ui,sans-serif;color:#8b8b8b"><a href="/impressum" data-sveltekit-reload style="color:inherit;text-decoration:none">Impressum</a> · <a href="/datenschutz" data-sveltekit-reload style="color:inherit;text-decoration:none">Datenschutz</a></div></body>`
+		reverse_proxy open-webui:8080 {
+			header_up X-Webui-Email {$GUEST_EMAIL}
+			header_up -Accept-Encoding
+		}
 	}
 
 	# No login for visitors: every request is signed in as the shared guest account (role "user",
