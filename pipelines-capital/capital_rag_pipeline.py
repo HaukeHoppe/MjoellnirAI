@@ -4,7 +4,7 @@ author: Mjoelnir AI
 date: 2026-09-25
 version: 0.3
 license: MIT
-description: RAG over the capital-markets chunks in faiss_capital_index (built from extracted_v2_all.json by ingest_capital_chunks.py). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their source, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
+description: RAG over the capital-markets chunks in faiss_public_index (Wikipedia articles and own explanatory texts, built by build_public_kb.py and ingest_capital_chunks.py; INDEX_DIR can point to another index such as faiss_capital_index). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their source, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
 requirements: langchain-community,langchain-openai,langchain-core,faiss-cpu,openai,pydantic,rank-bm25,numpy
 """
 
@@ -367,7 +367,8 @@ def minmax(scores: dict) -> dict:
 
 class Pipeline:
     class Valves(BaseModel):
-        INDEX_DIR: str = "/data/faiss_capital_index"
+        # Public knowledge base (build_public_kb.py); any index built by ingest_capital_chunks.py works.
+        INDEX_DIR: str = "/data/faiss_public_index"
         # Must match --embedding_model in ingest_capital_chunks.py.
         EMBEDDING_MODEL: str = "text-embedding-3-large"
         LLM_MODEL: str = "gpt-4o-mini"
