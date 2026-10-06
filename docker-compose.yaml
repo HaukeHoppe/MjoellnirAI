@@ -26,6 +26,10 @@ services:
       # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
       - ENABLE_SIGNUP=false
       - DEFAULT_USER_ROLE=pending
+      # VPS: signs every request in as the account whose email is in this header. Caddy sets it
+      # (guest user on WEBUI_URL, admin on the SSH-tunnel port), so visitors see no login screen.
+      # Empty locally = normal login. With it set, a request without the header cannot log in.
+      - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=${WEBUI_AUTH_TRUSTED_EMAIL_HEADER:-}
       # Fixed signing key so sessions survive container rebuilds; public URL for links and OAuth.
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env}
       - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
@@ -106,6 +110,8 @@ services:
       - "80:80"         # ACME HTTP challenge + redirect to HTTPS
       - "443:443"       # HTTPS
       - "443:443/udp"   # HTTP/3
+      # Admin entrance, localhost only: reach it with  ssh -L 8081:127.0.0.1:8081 <vps>
+      - "127.0.0.1:8081:8081"
 
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
@@ -117,6 +123,8 @@ services:
       # every local command. If either is empty, Caddy refuses to start and names the line.
       - WEBUI_URL=${WEBUI_URL:-}
       - ACME_EMAIL=${ACME_EMAIL:-}
+      - GUEST_EMAIL=${GUEST_EMAIL:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
 
     restart: always
 

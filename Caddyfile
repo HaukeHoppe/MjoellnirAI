@@ -27,6 +27,18 @@
 		-Server
 	}
 
+	# No login for visitors: every request is signed in as the shared guest account (role "user",
+	# no admin rights). header_up overwrites any value the client sends, so it cannot be forged.
 	# Chat streaming (SSE) and websockets are proxied without extra config.
-	reverse_proxy open-webui:8080
+	reverse_proxy open-webui:8080 {
+		header_up X-Webui-Email {$GUEST_EMAIL}
+	}
+}
+
+# Admin entrance: published on 127.0.0.1:8081 of the VPS only (see docker-compose.yaml), so it is
+# reachable only through an SSH tunnel: ssh -L 8081:127.0.0.1:8081 <vps>, then http://localhost:8081
+http://:8081 {
+	reverse_proxy open-webui:8080 {
+		header_up X-Webui-Email {$ADMIN_EMAIL}
+	}
 }
