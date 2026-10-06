@@ -1,0 +1,10 @@
+# Caddy with the replace-response plugin, which inserts the legal footer (Impressum, Datenschutz) into every
+# Open WebUI page; Open WebUI itself has no setting for a permanent footer.
+# Plugin pinned by commit (the repo has no release tags); bump deliberately.
+FROM caddy:2.11-builder AS builder
+
+RUN xcaddy build --with github.com/caddyserver/replace-response@80962887e4c680abfd1b11ce1403fa8cc0fdd3d6
+
+FROM caddy:2.11-alpine
+
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy

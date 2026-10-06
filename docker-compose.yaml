@@ -112,7 +112,10 @@ services:
   # =====================================================
 
   caddy:
-    image: caddy:2.11-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy   # caddy:2.11-alpine + replace-response plugin (legal footer)
+    image: caddy-legal-footer:2.11
     container_name: caddy
     profiles: ["vps"]
 

@@ -19,3 +19,12 @@ div:has(> div > div > p > a[href='/impressum']) > div .uppercase,
 div:has(> div > div > p > a[href='/impressum']) > div > button {
 	display: none !important;
 }
+
+/* Legal footer (inserted by Caddy, see Caddyfile): on phones the chat input sits at the bottom edge,
+   so the links move to the free top-right corner there. */
+@media (max-width: 767px) {
+	#legal-footer {
+		top: 6px !important;
+		bottom: auto !important;
+	}
+}
