@@ -34,7 +34,7 @@ class Starter(BaseModel):
     )
 
 
-STARTER_PROMPT = """Below is a summary of a topic from videos by a capital-markets creator.
+STARTER_PROMPT = """Below is a summary of a topic from a capital-markets knowledge base.
 Write a starter question a user could ask to learn about this topic.
 Ask only for what the summary actually explains - do not ask about details it does not contain.
 Keep the question general and timeless (no dates, no current market calls).
