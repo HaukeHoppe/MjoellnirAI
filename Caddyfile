@@ -27,6 +27,10 @@
 		-Server
 	}
 
+	# The guest account is shared by all visitors: nobody may rename it, change its picture or password.
+	@guest_account path /api/v1/auths/update/profile /api/v1/auths/update/password
+	respond @guest_account "Not available for the guest account" 403
+
 	# No login for visitors: every request is signed in as the shared guest account (role "user",
 	# no admin rights). header_up overwrites any value the client sends, so it cannot be forged.
 	# Chat streaming (SSE) and websockets are proxied without extra config.
