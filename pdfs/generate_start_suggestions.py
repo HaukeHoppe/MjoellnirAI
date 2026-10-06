@@ -1,11 +1,13 @@
 """
 Generates the start-page topic suggestions for the Capital Markets RAG model.
 
-Picks broad, well-covered topics from summaries.json (timeless concept summaries,
-each built from several chunks), lets an LLM write one starter question per
-topic, and keeps only questions the grader confirms the summary answers (same
-GRADE_PROMPT and MIN_RELEVANCE as the pipeline). Writes start_suggestions.json
-next to the index; apply_start_suggestions.py puts them on the model in Open WebUI.
+--style chains (default): picks cause -> effect chain texts (build_public_kb.py) across market
+domains and lets an LLM write a demanding question about how the trigger propagates, so the start
+page shows what the chat is for: connections, not definitions.
+--style summaries: picks broad, well-covered topics from summaries.json (timeless concept summaries).
+Either way only questions the grader confirms the text answers are kept (same GRADE_PROMPT and
+MIN_RELEVANCE as the pipeline). Writes start_suggestions.json next to the index;
+apply_start_suggestions.py puts them on the model in Open WebUI.
 
 Run inside the pipelines-capital container (index at /data, pipeline at /app/pipelines):
     docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
@@ -27,10 +29,11 @@ from capital_rag_pipeline import GRADE_PROMPT, Grade, Pipeline, tokenize  # noqa
 
 
 class Starter(BaseModel):
-    title: str = Field(..., description="Topic name, 2-4 words, German.")
-    subtitle: str = Field(..., description="Short phrase continuing the title, 3-6 words, German.")
+    # Lengths are set by the prompt (short topic suggestions vs. long chain questions).
+    title: str = Field(..., description="Topic name, German, as the prompt asks.")
+    subtitle: str = Field(..., description="Second line shown under the title, German, as the prompt asks.")
     question: str = Field(
-        ..., description="One question in German that the summary answers, as a user would ask it."
+        ..., description="The question in German that the text answers, as a user would ask it."
     )
 
 
@@ -57,21 +60,49 @@ def pick_topics(summaries: List[dict], count: int) -> List[dict]:
     return mixed[:count]
 
 
+CHAIN_STARTER_PROMPT = """Below is a text explaining a capital-markets cause -> effect chain.
+Write a start-page suggestion that invites the user to explore the chain, not to look up a term.
+title: 2-5 words naming trigger and end effect, e.g. "Aktiencrash → Gold".
+subtitle: the core question in one line, at most 90 characters, e.g. "Warum fällt Gold, wenn die Aktienmärkte crashen?"
+question: a demanding question of 1-3 sentences as a user would ask it: name the trigger, ask how it propagates
+step by step and what it means for the end effect (and, if the text covers it, under which conditions the chain
+breaks). Ask only for what the text explains. Timeless: no dates, no current market calls.
+Everything in German.
+
+Topic: {title}
+{content}"""
+
+
+def chain_topics(index_dir: str, count: int) -> List[dict]:
+    # Cause -> effect chain texts (build_public_kb.py), alternating between market domains.
+    with open(os.path.join(index_dir, "extracted_v2_all.json"), encoding="utf-8") as f:
+        chunks = [c for c in json.load(f) if c["sources"][0].startswith("Mjoelnir-Wirkungskette")]
+    by_domain = {}
+    for c in chunks:
+        by_domain.setdefault((c.get("market_domain") or [""])[0], []).append(c)
+    mixed = [c for row in zip_longest(*by_domain.values()) for c in row if c]
+    return mixed[:count]
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--index_dir", default="/data/faiss_capital_index")
+    parser.add_argument("--index_dir", default="/data/faiss_public_index")
     parser.add_argument("--count", type=int, default=12, help="Suggestions to keep.")
-    parser.add_argument("--model", default="gpt-4o-mini")
+    parser.add_argument("--model", default="gpt-4.1-mini")
+    # summaries: one topic explanation each; chains: multi-step cause -> effect questions.
+    parser.add_argument("--style", choices=["summaries", "chains"], default="chains")
     args = parser.parse_args()
 
-    with open(os.path.join(args.index_dir, "summaries.json"), encoding="utf-8") as f:
-        summaries = json.load(f)
     # Twice as many candidates as needed: some fail the grader or repeat a topic.
-    topics = pick_topics(summaries, 2 * args.count)
+    if args.style == "chains":
+        topics, prompt = chain_topics(args.index_dir, 2 * args.count), CHAIN_STARTER_PROMPT
+    else:
+        with open(os.path.join(args.index_dir, "summaries.json"), encoding="utf-8") as f:
+            topics, prompt = pick_topics(json.load(f), 2 * args.count), STARTER_PROMPT
 
     llm = ChatOpenAI(model=args.model, temperature=0)
     starters = llm.with_structured_output(Starter).batch(
-        [STARTER_PROMPT.format(title=s["title"], content=s["content"]) for s in topics],
+        [prompt.format(title=s["title"], content=s["content"]) for s in topics],
         config={"max_concurrency": 8},
         return_exceptions=True,
     )
@@ -92,8 +123,10 @@ def main():
             print(f"skip: {st.question} ({'error' if isinstance(grade, Exception) else grade.reason})")
             continue
         # "Diversifikation in der Anlagestrategie" / "Diversifikation im
-        # Portfoliomanagement" are one topic: compare the first content word.
-        key = (tokenize(st.title) or [st.title.lower()])[0]
+        # Portfoliomanagement" are one topic: compare the first content word
+        # (for chains the whole title: "Zinsen → Banken" and "Zinsen → Immobilien" differ).
+        words = tokenize(st.title) or [st.title.lower()]
+        key = " ".join(words) if args.style == "chains" else words[0]
         if key in seen:
             continue
         seen.add(key)

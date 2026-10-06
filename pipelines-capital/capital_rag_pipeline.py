@@ -2,9 +2,9 @@
 title: Capital Markets RAG
 author: Mjoelnir AI
 date: 2026-09-25
-version: 0.3
+version: 0.4
 license: MIT
-description: RAG over the capital-markets chunks in faiss_public_index (Wikipedia articles and own explanatory texts, built by build_public_kb.py and ingest_capital_chunks.py; INDEX_DIR can point to another index such as faiss_capital_index). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their source, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
+description: RAG over the capital-markets chunks in faiss_public_index (Wikipedia articles and own explanatory texts, built by build_public_kb.py and ingest_capital_chunks.py; INDEX_DIR can point to another index such as faiss_capital_index). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), causal chain search (cause -> effect paths of up to 4 steps through the directed concept graph, with the chunks stating each step), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their source, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
 requirements: langchain-community,langchain-openai,langchain-core,faiss-cpu,openai,pydantic,rank-bm25,numpy
 """
 
@@ -77,6 +77,19 @@ class Suggestions(BaseModel):
     suggestions: List[Suggestion] = Field(default_factory=list)
 
 
+class QueryConcepts(BaseModel):
+    causes: List[str] = Field(default_factory=list, description="Triggers / causes named in the question")
+    effects: List[str] = Field(default_factory=list, description="Effects the question asks about; empty if none")
+
+
+QUERY_CONCEPTS_PROMPT = """Name the cause -> effect concepts in this capital-markets question as short English
+Title Case names of economic quantities, actors or events (e.g. "Stock Market Crash", "Gold Price",
+"Interest Rates", "Bank Lending"). causes: the trigger(s) the question starts from. effects: what the question
+asks the consequences for; leave empty if it asks for consequences in general.
+
+Question: {question}"""
+
+
 GRADE_PROMPT = """Rate how well the document helps answer the question.
 Consider the specific intent of the question, not just keyword or topic overlap.
 
@@ -97,6 +110,16 @@ Do NOT use your own knowledge - not even for well-known textbook facts or to exp
 Stay faithful to the wording of the sources:
 - Keep their degree of certainty: "könnte" / "kann" stays a possibility, never "typischerweise" or "immer".
 - Only state a cause -> effect link that the context states as such. Do not join two separate statements into a new cause -> effect link.
+- You may build a chain of several steps when every single step is stated in the context: A -> B in one block, B -> C in another. Write each step as its own sentence with its own citation. Never state the final effect as a direct result of the trigger (A -> C) unless the context states that link itself.
+
+Mechanism questions (why / how / what happens if) are answered as a chain, as long as the context supports it:
+**<Short heading naming the mechanism>**
+1. **<Step>**: cause -> effect and how it works [n]
+2. **<Step>**: ... (as many steps as the context supports, in causal order)
+**Bedingungen und Gegeneffekte**: when the chain holds or breaks, and what works against it, as stated in the context.
+No introduction or summary sentence that links the trigger directly to the final effect - the steps make that link.
+Phrase each step close to the wording of its block and give only the reason the block gives; do not add reasons, actors or effects of your own.
+The context may start with "Causal paths": chains of relations found across the sources, each step with the blocks that state it. Use them to find and order the steps; every step still needs its block citation. Other questions are answered in normal prose.
 
 The context blocks come from the indexed capital-markets sources (each block label names its source) and come in two kinds:
 - CONCEPT blocks are timeless explanations. You may state them as general explanations.
@@ -118,7 +141,7 @@ Write every claim self-contained: replace "dadurch", "dies", "was", "somit", "th
 
 For each claim:
 - kind: "meta" if it only says what the sources do or do not cover, or only compares / contrasts claims from the context (e.g. "the two sources recommend different positions") without adding any information of its own. Everything else is "fact". A meta statement that adds any new information is a "fact".
-- quote (facts only): copy, character for character, ONE sentence from the context that states the claim. Never join several sentences. Only exception: if that sentence starts with a pronoun referring to the sentence directly before it ("Sie", "Er", "Es", "Dies", "Diese", "It", "This", ...), copy both consecutive sentences. If no single sentence states it, the claim is unsupported and quote stays empty. For meta claims leave it empty.
+- quote (facts only): copy, character for character, ONE sentence from the context that states the claim. Never join sentences from different places. Only exception: if the statement continues in the directly following sentence(s) of the same passage, which refer back with a pronoun ("Sie", "Er", "Dies", "Diese", "It", "This", ...) or a connector ("deshalb", "dadurch", "daher", "somit", "therefore", ...), copy up to three consecutive sentences. If no single sentence states it, the claim is unsupported and quote stays empty. For meta claims leave it empty.
 - supported: for a fact, true only if the quote states the claim - general knowledge does NOT count, even if the claim is true. For a meta claim, true if it accurately describes the context.
 
 The quote must state the claim itself: same cause, same effect, same degree of certainty. A fact is unsupported if it:
@@ -189,14 +212,16 @@ FOLLOW_UP_TASK = re.compile(r"^### Task:\s*Suggest .*follow-up questions", re.IG
 
 
 def normalize(text: str) -> str:
-    text = re.sub(r"[\"'„“”‚‘’«»]", "", text.lower())
+    # Parentheticals ("(Trading Halts)") are dropped: quotes often leave them out.
+    text = re.sub(r"\s*\([^)]*\)", "", text.lower())
+    text = re.sub(r"[\"'„“”‚‘’«»]", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
-# A sentence starting with one of these continues the subject of the previous
-# sentence ("Volatilität ... beschreibt das Risiko. Sie wird durch die
-# Standardabweichung gemessen."). Causal connectors ("dadurch", "deshalb") are
-# deliberately not included.
+# A sentence continues the previous one if it refers back to it early on: with a
+# pronoun ("Volatilität ... beschreibt das Risiko. Sie wird ... gemessen.") or a
+# causal connector ("Der Wert der Sicherheiten sinkt. Broker fordern deshalb
+# Nachschüsse."). Then the source itself states the link between the sentences.
 ANAPHORS = set(
     """
     sie er es dies diese dieser dieses diesen diesem ihr ihre ihren ihrem ihrer
@@ -204,20 +229,44 @@ ANAPHORS = set(
     it its they their these this
     """.split()
 )
+CONNECTORS = set(
+    """
+    deshalb dadurch daher darum deswegen somit folglich infolgedessen dementsprechend
+    therefore thus hence consequently
+    """.split()
+)
+
+
+def continues(sentence: str) -> bool:
+    words = re.findall(r"\w+", sentence)
+    return bool(words) and (words[0] in ANAPHORS or any(w in CONNECTORS for w in words[:8]))
+
+
+# A numbered step of a chain text ("2. Euro-Abwertung → Importpreise: ..."): one line stating one
+# cause -> effect, so its sentences belong together even without a connector.
+CHAIN_STEP = re.compile(r"^\s*\d+\.\s")
+
+
+def in_chain_step(quote: str, context: str) -> bool:
+    return any(CHAIN_STEP.match(line) and quote in normalize(line) for line in context.splitlines())
 
 
 def quote_in_context(quote: str, context: str) -> bool:
     # The checker's quote must really appear in the context, so the check cannot
     # be passed with an invented quote. Minor copy differences are tolerated.
-    # Only single-sentence quotes count: joining two sentences is how a cause from
-    # one sentence gets attached to an effect from another. Exception: two
-    # consecutive sentences where the second refers back with a pronoun, since
-    # it only names its subject through the first one.
+    # A quote is one sentence, up to three consecutive sentences of the same
+    # passage where each further sentence refers back to the previous one
+    # (continues()), or up to four consecutive sentences within one numbered
+    # chain step. Anything else would let a cause from one sentence be attached
+    # to an effect from an unrelated one.
+    raw_context = context
     quote, context = normalize(quote), normalize(context)
     sentences = re.split(r"(?<=[.!?])\s+", quote)
-    if len(quote) < 15 or len(sentences) > 2:
+    if len(quote) < 15 or len(sentences) > 4:
         return False
-    if len(sentences) == 2 and sentences[1].split(" ", 1)[0] not in ANAPHORS:
+    if not all(continues(s) for s in sentences[1:]):
+        return len(sentences) > 1 and in_chain_step(quote, raw_context)
+    if len(sentences) > 3:
         return False
     if quote in context:
         return True
@@ -371,9 +420,11 @@ class Pipeline:
         INDEX_DIR: str = "/data/faiss_public_index"
         # Must match --embedding_model in ingest_capital_chunks.py.
         EMBEDDING_MODEL: str = "text-embedding-3-large"
-        LLM_MODEL: str = "gpt-4o-mini"
-        # Model used for reranking/grading of retrieved chunks.
-        GRADER_MODEL: str = "gpt-4o-mini"
+        # gpt-4.1 follows multi-step chains across blocks better than gpt-4o-mini.
+        LLM_MODEL: str = "gpt-4.1"
+        # Model used for reranking/grading of retrieved chunks and the query-concept step.
+        # gpt-4.1-mini: own rate limits (gpt-4o-mini's daily request limit is shared with builds).
+        GRADER_MODEL: str = "gpt-4.1-mini"
         # Model for the claim-by-claim grounding check of the answer. A stronger
         # model than LLM_MODEL, so it catches textbook knowledge the answer model
         # slipped in.
@@ -394,7 +445,19 @@ class Pipeline:
         GRAPH_EXPAND_K: int = 4
         # Grading: keep chunks with supports_answer and relevance >= this.
         MIN_RELEVANCE: int = 6
-        TOP_K: int = 5
+        TOP_K: int = 6
+        # Causal chain search: the question's causes and effects are matched to graph concepts, and
+        # directed cause -> effect paths of up to CHAIN_MAX_HOPS steps between them are followed through
+        # the concept graph. The chunks stating the steps join the candidates; a path chunk only needs
+        # CHAIN_MIN_RELEVANCE, because a single step rarely answers the whole question by itself.
+        CHAIN_SEARCH: bool = True
+        CHAIN_MAX_HOPS: int = 4
+        CHAIN_PATHS: int = 3
+        CHAIN_EXTRA_K: int = 8
+        CHAIN_TOP_K: int = 6
+        CHAIN_MIN_RELEVANCE: int = 4
+        # Cosine similarity for matching a question concept to a graph concept.
+        CONCEPT_MIN_SIMILARITY: float = 0.55
         # The answer is generated in full, then every claim must be backed by a
         # verbatim quote from the context before anything is shown. Unsupported
         # claims are removed (up to MAX_REVISIONS rewrites); if some remain, no
@@ -425,6 +488,12 @@ class Pipeline:
         self.concept_chunks = {}
         self.concept_neighbors = {}
         self.concept_summaries = {}
+        # Directed graph for the chain search: source -> {target: total edge weight}, and unit vectors
+        # of the concept names (rows in concept_names order) to match question concepts.
+        self.out_edges = {}
+        self.concept_names = []
+        self.concept_vectors = None
+        self.concept_extractor = None
         # Recent questions -> what the follow-up task needs (see _follow_ups).
         self.recent = OrderedDict()
         self.llm = None
@@ -460,6 +529,7 @@ class Pipeline:
         check_llm = ChatOpenAI(model=self.valves.CHECK_MODEL, temperature=0)
         self.checker = check_llm.with_structured_output(AnswerCheck)
         self.explorer = grader_llm.with_structured_output(Suggestions)
+        self.concept_extractor = grader_llm.with_structured_output(QueryConcepts)
         # Revisions use the stronger model too: gpt-4o-mini tended to keep the
         # flagged statement in slightly different words.
         self.reviser = check_llm
@@ -495,11 +565,38 @@ class Pipeline:
             graph = json.load(f)
         for node in graph["nodes"]:
             self.concept_chunks[node["id"]] = [c for c in node["chunk_ids"] if c in self.docs]
+        self.out_edges = {}
         for edge in graph["edges"]:
             key = (edge["source"], edge["target"], edge["direction"])
             self.relation_chunks[key] = [e["chunk_id"] for e in edge["evidence"]]
             for a, b in ((edge["source"], edge["target"]), (edge["target"], edge["source"])):
                 self.concept_neighbors.setdefault(a, Counter())[b] += edge["weight"]
+            if edge["source"] != edge["target"]:
+                self.out_edges.setdefault(edge["source"], Counter())[edge["target"]] += edge["weight"]
+        if self.valves.CHAIN_SEARCH:
+            self._load_concept_vectors()
+
+    def _load_concept_vectors(self):
+        # Embeddings of all concept names, cached next to the index (concept_vectors.npz) and only
+        # recomputed when the graph's concepts change.
+        names = sorted(self.concept_chunks)
+        path = os.path.join(self.valves.INDEX_DIR, "concept_vectors.npz")
+        if os.path.exists(path):
+            cached = np.load(path, allow_pickle=False)
+            if list(cached["names"]) == names:
+                self.concept_names, self.concept_vectors = names, cached["vectors"]
+                return
+        try:
+            vectors = np.array(OpenAIEmbeddings(model=self.valves.EMBEDDING_MODEL).embed_documents(names))
+        except Exception as e:
+            print(f"[capital_rag] Concept vectors failed, chain search disabled: {e}")
+            return
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        self.concept_names, self.concept_vectors = names, vectors.astype(np.float32)
+        try:
+            np.savez(path, names=np.array(names), vectors=self.concept_vectors)
+        except OSError as e:
+            print(f"[capital_rag] Could not cache concept vectors: {e}")
 
     async def on_startup(self):
         self._load()
@@ -550,7 +647,100 @@ class Pipeline:
                         extra.append((other, 0.0))
         return candidates + extra[: self.valves.GRAPH_EXPAND_K]
 
-    def _grade(self, query: str, candidates: List[tuple]) -> List[tuple]:
+    def _match_concepts(self, phrases: List[str]) -> dict:
+        # Question concept phrases -> graph concepts (top 3 per phrase above CONCEPT_MIN_SIMILARITY).
+        if not phrases or self.concept_vectors is None:
+            return {}
+        vectors = np.array(self.vectorstore.embedding_function.embed_documents(phrases), dtype=np.float32)
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        matched = {}
+        for row in vectors @ self.concept_vectors.T:
+            for i in np.argsort(row)[::-1][:3]:
+                if row[i] >= self.valves.CONCEPT_MIN_SIMILARITY:
+                    name = self.concept_names[i]
+                    matched[name] = max(float(row[i]), matched.get(name, 0.0))
+        return matched
+
+    def _causal_paths(self, question: str) -> List[List[str]]:
+        # Directed cause -> effect paths through the concept graph, from the question's causes to its
+        # effects (breadth-first, so shorter paths first). Without effects: the strongest onward chains.
+        asked = self.concept_extractor.invoke(QUERY_CONCEPTS_PROMPT.format(question=question))
+        starts = self._match_concepts(asked.causes)
+        ends = self._match_concepts(asked.effects)
+        if not starts:
+            return []
+        max_hops, wanted = self.valves.CHAIN_MAX_HOPS, self.valves.CHAIN_PATHS
+        paths = []
+        if ends:
+            # Breadth-first with up to 3 predecessors per concept (strongest edges first), then every
+            # reached effect is traced back to the causes.
+            preds, frontier, seen = {}, list(starts), set(starts)
+            for _ in range(max_hops):
+                nxt = []
+                for node in frontier:
+                    for target, _ in self.out_edges.get(node, Counter()).most_common(30):
+                        if target in starts:
+                            continue
+                        if len(preds.setdefault(target, [])) < 3 and node not in preds[target]:
+                            preds[target].append(node)
+                        if target not in seen:
+                            seen.add(target)
+                            nxt.append(target)
+                frontier = nxt
+
+            def back(node: str, path: List[str]) -> Iterator[List[str]]:
+                if node in starts:
+                    yield [node] + path
+                    return
+                if len(path) >= max_hops:
+                    return
+                for prev in preds.get(node, []):
+                    if prev not in path:
+                        yield from back(prev, [node] + path)
+
+            for end in sorted(ends, key=ends.get, reverse=True):
+                for path in back(end, []):
+                    if len(path) > 1 and path not in paths:
+                        paths.append(path)
+        else:
+            # Strongest onward chain from each cause, branching at the first step.
+            for start in sorted(starts, key=starts.get, reverse=True)[:2]:
+                for first, _ in self.out_edges.get(start, Counter()).most_common(2):
+                    path = [start, first]
+                    while len(path) <= max_hops:
+                        options = [t for t, _ in self.out_edges.get(path[-1], Counter()).most_common(5)
+                                   if t not in path]
+                        if not options:
+                            break
+                        path.append(options[0])
+                    paths.append(path)
+        # Shorter and better-supported paths first.
+        support = lambda p: sum(self.out_edges[a][b] for a, b in zip(p, p[1:]))
+        paths.sort(key=lambda p: (len(p), -support(p)))
+        return paths[:wanted]
+
+    def _path_chunks(self, paths: List[List[str]], present: set) -> List[int]:
+        # The chunks that state the steps of the paths: a greedy cover, preferring chunks that state
+        # several steps at once (typically a chain text).
+        step_chunks = {}
+        for path in paths:
+            for a, b in zip(path, path[1:]):
+                ids = {c for (s, t, _), chunks in self.relation_chunks.items() if s == a and t == b for c in chunks}
+                step_chunks[(a, b)] = {c for c in ids if c in self.docs}
+        uncovered, chosen = set(step_chunks), []
+        while uncovered and len(chosen) < self.valves.CHAIN_EXTRA_K:
+            best = max(
+                {c for step in uncovered for c in step_chunks[step]},
+                key=lambda c: (sum(c in step_chunks[s] for s in uncovered), c in present),
+                default=None,
+            )
+            if best is None:
+                break
+            chosen.append(best)
+            uncovered = {s for s in uncovered if best not in step_chunks[s]}
+        return chosen
+
+    def _grade(self, query: str, candidates: List[tuple], path_ids: frozenset = frozenset()) -> List[tuple]:
         # reranking.py-style 0-10 LLM scoring combined with reliable_rag's
         # relevance grading: unsupported chunks are dropped before generation.
         docs = [self.docs[chunk_id] for chunk_id, _ in candidates]
@@ -564,15 +754,19 @@ class Pipeline:
             config={"max_concurrency": 8},
             return_exceptions=True,
         )
-        kept = []
+        kept, steps = [], []
         for (chunk_id, fused), doc, grade in zip(candidates, docs, grades):
             if isinstance(grade, Exception):
                 print(f"[capital_rag] Grading failed for chunk {chunk_id}: {grade}")
                 continue
             if grade.supports_answer and grade.relevance >= self.valves.MIN_RELEVANCE:
                 kept.append((doc, grade, fused))
+            elif chunk_id in path_ids and grade.relevance >= self.valves.CHAIN_MIN_RELEVANCE:
+                # A step of a causal path: relevant as a link even if it alone does not answer.
+                steps.append((doc, grade, fused))
         kept.sort(key=lambda hit: (hit[1].relevance, hit[2]), reverse=True)
-        return kept[: self.valves.TOP_K]
+        steps.sort(key=lambda hit: hit[1].relevance, reverse=True)
+        return kept[: self.valves.TOP_K] + steps[: self.valves.CHAIN_TOP_K]
 
     def _explore(
         self, query: str, candidates: List[tuple], answered: bool = False, exclude: set = frozenset()
@@ -870,10 +1064,25 @@ class Pipeline:
                 f"Konzeptgraph: {len(expanded) - len(candidates)} verwandte Abschnitte ergänzt"
             )
         candidates = expanded
+        paths, path_ids = [], frozenset()
+        if self.valves.CHAIN_SEARCH and self.concept_vectors is not None:
+            yield from step("Suche Wirkungsketten im Konzeptgraphen …")
+            try:
+                paths = self._causal_paths(user_message)
+            except Exception as e:
+                print(f"[capital_rag] Chain search failed: {e}")
+            if paths:
+                present = {chunk_id for chunk_id, _ in candidates}
+                path_ids = frozenset(self._path_chunks(paths, present))
+                candidates = candidates + [(c, 0.0) for c in path_ids if c not in present]
+                yield from step(
+                    f"{len(paths)} Wirkungskette(n) mit bis zu {max(len(p) - 1 for p in paths)} Schritten gefunden",
+                    "Wirkungsketten:\n" + "\n".join(f"  - {' → '.join(p)}" for p in paths),
+                )
         grounded = []
         if candidates:
             yield from step(f"Bewerte die Relevanz von {len(candidates)} Abschnitten …")
-            grounded = self._grade(user_message, candidates)
+            grounded = self._grade(user_message, candidates, path_ids)
 
         if not grounded:
             yield from no_answer("Keine relevanten Abschnitte gefunden")
@@ -915,6 +1124,26 @@ class Pipeline:
                 }
             )
         context = "\n\n".join(b["text"] for b in blocks)
+        # Causal paths whose every step is stated by a selected block, with those block numbers.
+        path_lines = []
+        for path in paths:
+            refs = []
+            for a, b in zip(path, path[1:]):
+                nums = [
+                    i for i, (doc, _, _) in enumerate(grounded, start=1)
+                    if any(r["source"] == a and r["target"] == b for r in doc.metadata.get("relations", []))
+                ]
+                refs.append(nums)
+            if all(refs):
+                line = path[0] + "".join(
+                    f" -> {b} [{', '.join(map(str, nums))}]" for b, nums in zip(path[1:], refs)
+                )
+                path_lines.append(f"- {line}")
+        if path_lines:
+            context = (
+                "Causal paths (relations found across the sources; [n] = block that states the step):\n"
+                + "\n".join(path_lines) + "\n\n" + context
+            )
 
         # None = follow-ups are computed later by the follow-up task (_follow_ups).
         suggestions = None
