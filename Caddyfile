@@ -42,7 +42,9 @@
 
 	# Open WebUI loads /static/custom.css on every page; visitors get guest.css instead, which hides the
 	# user menu (settings, sign out) and the "You're now logged in" toast.
+	# no-cache: browsers revalidate it on every load, so a cached older custom.css never wins.
 	handle /static/custom.css {
+		header Cache-Control "no-cache"
 		root * /etc/caddy
 		rewrite * /guest.css
 		file_server
