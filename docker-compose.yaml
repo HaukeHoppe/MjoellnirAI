@@ -22,10 +22,10 @@ services:
       - ./open-webui-data:/app/backend/data
 
     environment:
-      # No login at all: every visitor uses one shared ADMIN account, so anyone can see the API keys
-      # in Admin Panel -> Connections, read all chats and install Functions/Tools (arbitrary Python
-      # in this container). Only accepted on an empty open-webui-data/ (no existing users).
-      - WEBUI_AUTH=False
+      # No public self-registration; new accounts (if signup is re-enabled) wait for admin approval.
+      # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
+      - ENABLE_SIGNUP=false
+      - DEFAULT_USER_ROLE=pending
       # Fixed signing key so sessions survive container rebuilds; public URL for links and OAuth.
       - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env}
       - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
