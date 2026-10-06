@@ -52,3 +52,9 @@ div.h-36:has(button.waterfall) {
 
 /* The chain hint under each question (Auslöser → … → Wirkung) shows on every screen height: it tells the
    visitor which cause -> effect chain the question explains. */
+
+/* The status steps of an answer are always listed (Dockerfile.open-webui opens the status history). The single
+   line above the list repeats its last step, so it is hidden while the list is shown. */
+div:has(> button[aria-expanded="true"] + div.flex-row > div.w-full) > button[aria-expanded="true"] {
+	display: none !important;
+}
