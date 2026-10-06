@@ -101,14 +101,27 @@ The output lists **only the sources the answer actually cites**, each marked *Ko
 
 ## Ingestion: preparing the data
 
+The public site answers from `pdfs/faiss_public_index/` (the pipeline's default `INDEX_DIR`): German Wikipedia
+articles (CC BY-SA 4.0) and own explanatory texts, built by [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py).
+Use only sources you have the rights to publish; the private `faiss_capital_index` stays selectable via `INDEX_DIR`.
+
 ```sh
-docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py
+# 1. Wikipedia articles for the topic list (free), check wiki_resolved.json, then metadata + own texts (~1 $)
+docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage fetch
+docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage build
+# 2. Index, graph, summaries; long runs: start with systemd-run so they survive the SSH session
+docker exec open-webui-pipelines-capital python /data/ingest_capital_chunks.py --index_dir /data/faiss_public_index
+# 3. Start suggestions, licence page, reload
+docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py --index_dir /data/faiss_public_index
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/faiss_public_index/start_suggestions.json
+cp pdfs/faiss_public_index/lizenzen.html legal/lizenzen.html
 docker restart open-webui-pipelines-capital
 ```
 
-Input: `pdfs/faiss_capital_index/extracted_v2_all.json`. These are pre-extracted transcript chunks with `title`,
-`content`, `embedding_text`, `hypothetical_questions`, `concepts`, `relations`, `sources`, and other fields. This file
-is produced outside this repo.
+`build_public_kb.py` writes the chunk format of `extracted_v2_all.json` (`title`, `content`, `embedding_text`,
+`hypothetical_questions`, `concepts`, `relations`, `sources`, ...) plus `lizenzen.html`, the attribution page Caddy
+serves at `/lizenzen` (linked in the footer), as CC BY-SA requires. OpenAI limits gpt-4o-mini to 10,000 requests per
+day on lower tiers, which the chat shares; pass `--llm_model` / `--model` to use another model's quota for a rebuild.
 
 ```mermaid
 flowchart LR
@@ -345,7 +358,9 @@ When an answer is missing, find which stage is responsible:
 | [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) | The query-time pipeline |
 | [`pdfs/ingest_capital_chunks.py`](pdfs/ingest_capital_chunks.py) | Offline ingestion (classification, embedding, summaries, graph) |
 | [`pdfs/generate_start_suggestions.py`](pdfs/generate_start_suggestions.py), [`pdfs/apply_start_suggestions.py`](pdfs/apply_start_suggestions.py) | Verified start-page questions |
-| `pdfs/faiss_capital_index/` | Generated index and caches (git-ignored) |
+| [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py) | Builds the public knowledge base (Wikipedia + own texts) and the licence page |
+| `pdfs/faiss_public_index/`, `pdfs/faiss_capital_index/` | Generated indexes and caches (git-ignored) |
+| [`legal/`](legal/) | Impressum, Datenschutzerklärung, Lizenzen (served by Caddy) |
 | [`all_rag_techniques_runnable_scripts/`](all_rag_techniques_runnable_scripts/) | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …) |
 | [`docs/`](docs/) | Detailed documentation |
 | [`docker-compose.yaml`](docker-compose.yaml), `Dockerfile.*`, [`requirements.txt`](requirements.txt) | Container setup |

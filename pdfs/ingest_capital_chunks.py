@@ -379,7 +379,9 @@ def main():
         chunks = json.load(f)
 
     # max_retries: back off on 429s instead of aborting the whole run.
-    llm = ChatOpenAI(model=args.llm_model, temperature=0, max_retries=30)
+    # timeout: a single hanging request otherwise blocks its whole batch forever (seen during the
+    # relation classification); after 60 s it is retried like a rate-limited one.
+    llm = ChatOpenAI(model=args.llm_model, temperature=0, max_retries=30, timeout=60)
     classes = classify_chunks(
         chunks, llm, os.path.join(args.index_dir, "chunk_classes.json")
     )
@@ -407,7 +409,7 @@ def main():
         f"Embedding {len(embed_inputs)} texts for {len(chunks)} chunks "
         f"with {args.embedding_model} ..."
     )
-    embeddings = OpenAIEmbeddings(model=args.embedding_model, max_retries=10)
+    embeddings = OpenAIEmbeddings(model=args.embedding_model, max_retries=10, timeout=120)
     vectors = embeddings.embed_documents(embed_inputs)
 
     primary_vectors = {cid: vectors[pos] for cid, pos in primary_positions.items()}
