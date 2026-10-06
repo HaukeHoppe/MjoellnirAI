@@ -28,3 +28,10 @@ div.select-none:has(#sidebar-new-chat-button) {
 		margin-bottom: 14px !important;
 	}
 }
+
+/* Start-page suggestions are long cause -> effect questions: up to three lines instead of one, so they are
+   not cut off with "…" on phones. */
+button.waterfall .line-clamp-1 {
+	-webkit-line-clamp: 3 !important;
+	line-clamp: 3 !important;
+}

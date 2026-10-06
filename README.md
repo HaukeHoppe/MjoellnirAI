@@ -68,10 +68,11 @@ ingestion**. At query time, LLM calls go only to the question: grading, answerin
 flowchart TD
     Q[User question] --> R["1. Hybrid retrieval<br/>dense vectors + BM25, fused 60/40<br/>→ top 12"]
     R --> GX["2. Graph expansion<br/>+ ≤ 4 chunks asserting the same cause → effect"]
-    GX --> GR["3. LLM relevance gate<br/>supports_answer AND relevance ≥ 6/10<br/>→ top 5"]
+    GX --> CS["2b. Causal chain search<br/>question causes/effects → graph concepts,<br/>paths of ≤ 4 steps, + chunks stating each step"]
+    CS --> GR["3. LLM relevance gate<br/>supports_answer AND relevance ≥ 6/10 → top 6<br/>+ chain steps with relevance ≥ 4 → top 6"]
     GR -->|nothing passes| NA[Refuse + suggest related topics]
     GR --> CTX["4. Context blocks labelled<br/>CONCEPT / OPINION, TIMELESS / TIME-BOUND"]
-    CTX --> GEN["5. Generate answer<br/>context only, cite every statement"]
+    CTX --> GEN["5. Generate answer (gpt-4.1)<br/>context only, cite every statement;<br/>mechanisms as numbered chain steps"]
     GEN --> CHK["6. Check every claim<br/>gpt-4o + code-side quote, cause<br/>and attribution checks"]
     CHK -->|all supported| OUT["Answer + cited sources<br/>with relevance reasons"]
     CHK -->|problems| REV["Targeted revision<br/>max 2 rounds"]
@@ -102,13 +103,17 @@ The output lists **only the sources the answer actually cites**, each marked *Ko
 ## Ingestion: preparing the data
 
 The public site answers from `pdfs/faiss_public_index/` (the pipeline's default `INDEX_DIR`): German Wikipedia
-articles (CC BY-SA 4.0) and own explanatory texts, built by [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py).
+articles (CC BY-SA 4.0), own explanatory texts and own cause -> effect chains (how a shock propagates step by step,
+written by gpt-4.1), built by [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py). The `normalize` stage maps all
+concept names to canonical English names, so the concept graph links chunks of different sources for the chain search.
 Use only sources you have the rights to publish; the private `faiss_capital_index` stays selectable via `INDEX_DIR`.
 
 ```sh
-# 1. Wikipedia articles for the topic list (free), check wiki_resolved.json, then metadata + own texts (~1 $)
+# 1. Wikipedia articles for the topic lists (free), check wiki_resolved.json, then metadata, own texts and
+#    chains (~3-4 $ from scratch; unchanged chunks are reused from the previous build)
 docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage fetch
 docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage build
+docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage normalize   # canonical concept names
 # 2. Index, graph, summaries; long runs: start with systemd-run so they survive the SSH session
 docker exec open-webui-pipelines-capital python /data/ingest_capital_chunks.py --index_dir /data/faiss_public_index
 # 3. Start suggestions, licence page, reload
@@ -120,7 +125,8 @@ docker restart open-webui-pipelines-capital
 
 `build_public_kb.py` writes the chunk format of `extracted_v2_all.json` (`title`, `content`, `embedding_text`,
 `hypothetical_questions`, `concepts`, `relations`, `sources`, ...) plus `lizenzen.html`, the attribution page Caddy
-serves at `/lizenzen` (linked in the footer), as CC BY-SA requires. OpenAI limits gpt-4o-mini to 10,000 requests per
+serves at `/lizenzen` (linked in the footer), as CC BY-SA requires. [`pdfs/eval_chains.py`](pdfs/eval_chains.py)
+measures chain answers (15 fixed questions, LLM-judged steps / completeness / refusals) before and after a change. OpenAI limits gpt-4o-mini to 10,000 requests per
 day on lower tiers, which the chat shares; pass `--llm_model` / `--model` to use another model's quota for a rebuild.
 
 ```mermaid

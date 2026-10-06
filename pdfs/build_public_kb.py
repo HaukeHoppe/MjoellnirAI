@@ -7,6 +7,14 @@ Builds the public knowledge base for the Capital Markets RAG pipeline from sourc
    lizenzen.html, as CC BY-SA requires.
 2. Own explanatory texts: an LLM writes one timeless explanation per topic from general knowledge,
    without market calls or forecasts.
+3. Own cause -> effect chains: a stronger LLM explains how a shock propagates through markets step by step
+   (trigger, numbered steps, conditions, counter-effects), one relation per step. These carry the
+   multi-step links that encyclopedia articles rarely state.
+4. Concept normalization: every concept name (chunk concepts and relation ends) is mapped to one canonical
+   English name, so the concept graph connects chunks from different sources and chains can be followed
+   across them.
+
+Unchanged chunks are taken over from the previous build, so a rebuild only pays for new material.
 
 Output is the chunk format of extracted_v2_all.json, so ingest_capital_chunks.py builds the index
 unchanged. Run inside the capital pipelines container (/data = ./pdfs):
@@ -14,10 +22,12 @@ unchanged. Run inside the capital pipelines container (/data = ./pdfs):
     docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage fetch
     # check /data/faiss_public_index/wiki_resolved.json (topic -> article), then:
     docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage build
+    docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage normalize
     docker exec open-webui-pipelines-capital python /data/ingest_capital_chunks.py --index_dir /data/faiss_public_index
 """
 
 import argparse
+import hashlib
 import html
 import json
 import os
@@ -25,10 +35,13 @@ import re
 import time
 import urllib.parse
 import urllib.request
+from collections import Counter
 from typing import List, Literal
 
-from langchain_openai import ChatOpenAI
+import numpy as np
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from pydantic import BaseModel, Field
+from sklearn.cluster import AgglomerativeClustering
 
 OUT_DIR = "/data/faiss_public_index"
 WIKI_API = "https://de.wikipedia.org/w/api.php"
@@ -75,6 +88,98 @@ TOPICS = [
     "Abgeltungsteuer", "Sparerpauschbetrag", "Vorabpauschale", "Altersvorsorge", "Kapitallebensversicherung",
 ]
 
+# Wikipedia only (no own text): articles on how shocks spread, the links between the topics above.
+WIKI_MECHANISMS = [
+    "Nachschusspflicht", "Margin Call", "Deleveraging", "Flight to Quality", "Finanzielle Ansteckung",
+    "Pensionsgeschäft", "Credit Spread", "Bank Run", "Kreditklemme", "Systemisches Risiko", "Prozyklizität",
+    "VIX", "Long-Term Capital Management", "Schwarzer Montag", "Flash Crash", "Vermögenseffekt",
+    "Transmissionsmechanismus der Geldpolitik", "Phillips-Kurve", "Taylor-Regel", "Zinsparität",
+    "Kaufkraftparität", "Ölkrise", "Schuldendeflation", "Asienkrise", "Eurokrise", "Silicon Valley Bank",
+    "Schattenbank", "Verbriefung", "Collateralized Debt Obligation", "Credit Default Swap", "Fallen Angel",
+    "Lohn-Preis-Spirale", "Crowding-out", "Zinsänderungsrisiko", "Liquiditätsfalle",
+]
+
+# Own cause -> effect chains: how a trigger propagates through markets (written for this project).
+CHAIN_TOPICS = [
+    # Crashes, leverage and liquidity
+    "Aktiencrash, Margin Calls und Notverkäufe von Gold",
+    "Deleveraging: Wie Schuldenabbau Kursrückgänge verstärkt",
+    "Volatilitätsanstieg und risikobasierte Strategien (Volatility Targeting, Risk Parity)",
+    "Flucht in sichere Häfen: Staatsanleihen, US-Dollar, Schweizer Franken und Gold in Krisen",
+    "Ansteckung zwischen Anlageklassen in Krisen: steigende Korrelationen",
+    "Liquiditätsspirale: Fallende Preise, höhere Sicherheitsabschläge, Zwangsverkäufe",
+    "Short Squeeze: Leerverkäufer, Eindeckungskäufe und Kursexplosion",
+    "Gamma-Effekte am Optionsmarkt: Absicherungsgeschäfte der Händler verstärken Kursbewegungen",
+    "Fondsabflüsse und Notverkäufe bei offenen Fonds",
+    "Bank-Run: Vertrauensverlust, Einlagenabzug und Notverkäufe von Vermögenswerten",
+    "Hebelprodukte und kreditfinanzierte Wertpapierkäufe als Verstärker von Abwärtsbewegungen",
+    "Rebalancing in Crashphasen: Wie Portfolio-Umschichtungen Märkte stützen oder belasten",
+    # Rates and banks
+    "Steigende Leitzinsen, Kursverluste bei Anleihen und Bankenstress",
+    "Zinsanstieg und Bewertung von Wachstumsaktien über den Diskontierungssatz",
+    "Inverse Zinsstrukturkurve, Bankmargen und Kreditvergabe",
+    "Zinswende und Immobilienpreise über Finanzierungskosten",
+    "Steigende Zinsen und hoch verschuldete Unternehmen (Refinanzierungsrisiko)",
+    "Kreditaufschläge als Frühindikator: Spreads, Finanzierungsbedingungen, Investitionen",
+    "Kreditklemme: Bankverluste, Eigenkapital, eingeschränkte Kreditvergabe und Rezession",
+    "Stress am Geldmarkt: knappe Liquidität, Geldmarktzinsen und Eingriffe der Zentralbank",
+    "Zinsänderungsrisiko von Anleihen: Duration, Kursverlust und Wiederanlage",
+    # Central banks and states
+    "Transmissionsmechanismus der Geldpolitik: vom Leitzins zur Inflation",
+    "Quantitative Lockerung: Anleihekäufe, Renditen, Portfolioumschichtung und Vermögenspreise",
+    "Quantitative Straffung: Bilanzabbau, Liquidität und Risikoprämien",
+    "Zinserwartungen und Anleihekurse: Wie Erwartungen Märkte bewegen, bevor die Zentralbank handelt",
+    "Glaubwürdigkeit der Zentralbank und Inflationserwartungen",
+    "Lohn-Preis-Spirale: Inflation, Lohnforderungen, Kosten und weitere Preissteigerungen",
+    "Staatsverschuldung, Defizite und Anleiherenditen",
+    "Steigende Staatsanleiherenditen und Verdrängung privater Investitionen",
+    "Staatsschuldenkrise: Zinsanstieg, Bankbilanzen und Teufelskreis zwischen Staat und Banken",
+    # Currencies and global flows
+    "Starker US-Dollar und Schwellenländer mit Schulden in Dollar",
+    "Auflösung von Carry-Trades: Yen-Aufwertung, Zwangsverkäufe und globale Marktturbulenzen",
+    "Euro-Abwertung, Exportunternehmen und importierte Inflation",
+    "Zinsdifferenzen und Wechselkurse: Kapitalströme zwischen Währungsräumen",
+    "Rohstoffpreise und Währungen von Rohstoffexporteuren",
+    "Kapitalflucht aus Schwellenländern: Abwertung, Inflation und Zinserhöhungen",
+    "Dollar-Knappheit in Krisen und Swap-Linien der Zentralbanken",
+    # Commodities and inflation
+    "Ölpreisschock: Energiepreise, Inflation, Zinsen und Konsum",
+    "Ölpreis, Inflationserwartungen und Anleiherenditen",
+    "Lieferkettenstörungen, Erzeugerpreise und Verbraucherpreise",
+    "Goldpreis, Realzinsen und Opportunitätskosten",
+    "Goldpreis und US-Dollar: der Wechselkurseffekt",
+    "Stagflation: Angebotsschock, Inflation, schwaches Wachstum und das Dilemma der Zentralbank",
+    "Schuldendeflation: fallende Preise, steigende reale Schuldenlast und Investitionszurückhaltung",
+    "Energiepreisschock in Europa: Industrieproduktion, Inflation und Euro",
+    "Zölle und Handelskonflikte: Preise, Unternehmensgewinne, Wechselkurse und Lieferketten",
+    # Equities and valuation
+    "Inflation und Value- gegenüber Wachstumsaktien",
+    "Gewinnrevisionen, Bewertungsniveaus und Kursreaktionen",
+    "Rezessionsangst: Gewinnerwartungen, Risikoprämie, zyklische und defensive Aktien",
+    "Konjunkturzyklus und Sektorrotation",
+    "Vermögenseffekt: Aktienkurse, Konsum und Konjunktur",
+    "Aktienrückkäufe, Verschuldung und Zinsniveau",
+    "Hohe Indexkonzentration und passive Fondsströme",
+    "Korrelation zwischen Aktien und Anleihen bei hoher Inflation",
+    "Politische Unsicherheit, Risikoprämien und Kapitalflüsse",
+    # Bubbles and crises
+    "Kreditfinanzierte Spekulationsblase: Entstehung, Höhepunkt und Platzen",
+    "Immobilienblase, Verbriefung und Bankenkrise",
+    "Bewertungsexzesse, Kapitalzuflüsse und Korrektur bei Technologieaktien",
+    "Herabstufung der Bonität: Zwangsverkäufe, Finanzierungskosten und Ausfallrisiko",
+    # Behaviour and data surprises
+    "Herdenverhalten und Momentum: wie Trends sich selbst verstärken",
+    "Verlustaversion, Panikverkäufe und Kapitulation am Tiefpunkt",
+    "Anlegerstimmung als Kontraindikator und Trendwenden",
+    "Einkaufsmanagerindex, Gewinnerwartungen und Aktienmärkte",
+    "Arbeitsmarktdaten, Zinserwartungen und Reaktionen von Anleihen und Aktien",
+    "Überraschende Inflationsdaten und Marktreaktionen",
+    "Konjunkturabschwung, Steuereinnahmen, Staatsdefizit und Anleihemarkt",
+    "Kryptowährungen, Liquidität und Risikoappetit",
+    "Stablecoins, Reserven und Ansteckung am Kryptomarkt",
+    "Saisonale Effekte und ihre möglichen Ursachen",
+]
+
 # Topics whose title or search hit is the wrong article (checked by hand in wiki_resolved.json).
 # None = no fitting article; the topic only gets an own explanatory text.
 WIKI_OVERRIDES = {
@@ -86,6 +191,13 @@ WIKI_OVERRIDES = {
     "Trendlinie": None,
     "Saisonalität (Börse)": None,
     "Präsidentschaftszyklus": None,
+    "Systemisches Risiko": "Systemrisiko",
+    "Finanzielle Ansteckung": "Ansteckungseffekt",
+    "Flight to Quality": None,
+    "Prozyklizität": None,
+    "Vermögenseffekt": None,
+    "Deleveraging": None,
+    "Margin Call": None,
 }
 
 SKIP_SECTIONS = {
@@ -221,7 +333,7 @@ def chunk_article(sections: List[tuple]) -> List[dict]:
 
 def stage_fetch():
     resolved, articles = {}, []
-    for topic in TOPICS:
+    for topic in TOPICS + WIKI_MECHANISMS:
         title = resolve(topic)
         resolved[topic] = title
         if not title or any(a["title"] == title for a in articles):
@@ -282,6 +394,31 @@ OWN_PROMPT = """Write a timeless German explanation of the capital-markets topic
 Then create the retrieval metadata for your text (relations only for links your text states)."""
 
 
+class ChainText(Meta):
+    content: str = Field(
+        ...,
+        description="German text, 1800-3000 characters: 'Auslöser:' paragraph, then 'Wirkungskette:' with numbered "
+        "steps (one cause -> effect per step, each with its mechanism), then 'Bedingungen:' and "
+        "'Gegeneffekte und Grenzen:' paragraphs, separated by blank lines",
+    )
+
+
+CHAIN_PROMPT = """Explain in German, for private investors, how this capital-markets chain works: "{topic}".
+- Start from the trigger and follow the propagation step by step through markets, institutions and investor
+  behaviour to the final effects. 4-7 numbered steps; each step is one cause -> effect with its mechanism
+  (who acts, why, what it does to prices, liquidity or financing).
+- Then the conditions under which the chain runs (and when it breaks), and counter-effects or limits.
+- Timeless and general: use historical episodes only as examples, no current market assessment, forecast,
+  price target or recommendation.
+- Write in your own words from general financial knowledge. Do not reproduce text from any book, article,
+  course or video, and do not name any author, course, company offering or website.
+Metadata: one relation per numbered step, in step order, so the relations form a chain (the target of one step
+is the source of the next where the text says so). Concepts and relation ends: short English Title Case names
+of the economic quantity or actor (e.g. "Stock Prices", "Margin Calls", "Gold Price"), the same name every time
+the same thing is meant. Questions: 8 German questions a private investor would ask about the whole chain or
+its steps, several of them "Warum ... wenn ..." / "Was passiert mit ... wenn ..." questions."""
+
+
 def run_batch(llm, prompts: List[str]) -> list:
     results = llm.batch(prompts, config={"max_concurrency": 8}, return_exceptions=True)
     # One retry for failed calls (rate limits, truncated output).
@@ -322,42 +459,198 @@ def lizenzen_html(articles: List[dict], own_topics: List[str]) -> str:
         "{n_own}", str(len(own_topics)))
 
 
-def stage_build(model: str):
-    articles = json.load(open(f"{OUT_DIR}/wiki_raw.json", encoding="utf-8"))
-    llm_meta = ChatOpenAI(model=model, temperature=0, max_retries=10).with_structured_output(Meta)
-    llm_own = ChatOpenAI(model=model, temperature=0.3, max_retries=10).with_structured_output(OwnText)
+# Control characters / replacement characters: gpt-4.1 occasionally emits umlauts as "\x1f" in long
+# structured outputs ("f\x1fhren"). Such a text can never be quoted correctly by the answer check.
+BROKEN_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f�]")
 
-    wiki_items = [(a, i, c) for a in articles for i, c in enumerate(a["chunks"])]
-    print(f"Metadata for {len(wiki_items)} Wikipedia chunks ...")
-    metas = run_batch(llm_meta, [
-        META_PROMPT.format(article=a["title"], sections=", ".join(c["sections"]), text=c["text"])
-        for a, _, c in wiki_items
-    ])
-    print(f"Own texts for {len(TOPICS)} topics ...")
-    owns = run_batch(llm_own, [OWN_PROMPT.format(topic=re.sub(r"\s*\(.*\)$", "", t)) for t in TOPICS])
+
+def is_broken(value) -> bool:
+    if isinstance(value, str):
+        return bool(BROKEN_CHARS.search(value))
+    if isinstance(value, list):
+        return any(is_broken(v) for v in value)
+    if isinstance(value, dict):
+        return any(is_broken(v) for v in value.values())
+    if isinstance(value, BaseModel):
+        return is_broken(value.model_dump())
+    return False
+
+
+def load_previous() -> dict:
+    # Chunks of the previous build by source label, to take over unchanged ones without LLM calls.
+    # Broken chunks are left out, so they are generated again.
+    path = f"{OUT_DIR}/extracted_v2_all.json"
+    if not os.path.exists(path):
+        return {}
+    return {c["sources"][0]: c for c in json.load(open(path, encoding="utf-8")) if not is_broken(c)}
+
+
+def generate(llm, label: str, items: List[tuple], previous: dict) -> List[dict]:
+    # items: (source label, prompt, fixed content or None for generated texts). A previous chunk is
+    # reused when its source matches and, for fixed content (Wikipedia), the content is unchanged.
+    todo = [(src, prompt) for src, prompt, content in items
+            if not (src in previous and (content is None or previous[src]["content"] == content))]
+    print(f"{label}: {len(items)} ({len(items) - len(todo)} from previous build, {len(todo)} new) ...")
+    fresh = dict(zip([src for src, _ in todo], run_batch(llm, [p for _, p in todo]))) if todo else {}
+    prompts = dict(todo)
+    for _ in range(2):
+        # Outputs with broken characters are generated again (twice at most), then dropped.
+        broken = [src for src, r in fresh.items() if not isinstance(r, Exception) and is_broken(r)]
+        if not broken:
+            break
+        print(f"  {len(broken)} outputs with broken characters, generating again ...")
+        fresh.update(zip(broken, run_batch(llm, [prompts[src] for src in broken])))
+    for src, r in fresh.items():
+        if not isinstance(r, Exception) and is_broken(r):
+            fresh[src] = ValueError("broken characters in output")
+    out = []
+    for src, _, content in items:
+        if src not in fresh:
+            out.append(dict(previous[src]))
+        elif isinstance(fresh[src], Exception):
+            print(f"  skipped {src}: {fresh[src]}")
+        else:
+            result = fresh[src]
+            out.append(to_chunk(result, content if content is not None else result.content, src, 0))
+    return out
+
+
+def short_name(topic: str) -> str:
+    return re.sub(r"\s*\(.*\)$", "", topic)
+
+
+def stage_build(model: str, chain_model: str):
+    articles = json.load(open(f"{OUT_DIR}/wiki_raw.json", encoding="utf-8"))
+    previous = load_previous()
+    llm_meta = ChatOpenAI(model=model, temperature=0, max_retries=10, timeout=120).with_structured_output(Meta)
+    llm_own = ChatOpenAI(model=model, temperature=0.3, max_retries=10, timeout=120).with_structured_output(OwnText)
+    # gpt-4.1 has a low tokens-per-minute limit on lower tiers: many retries, long timeout.
+    llm_chain = ChatOpenAI(model=chain_model, temperature=0.3, max_retries=30, timeout=180).with_structured_output(
+        ChainText)
+
+    wiki_items = []
+    for a in articles:
+        for i, c in enumerate(a["chunks"]):
+            content = f'Aus dem Wikipedia-Artikel „{a["title"]}“ ({", ".join(c["sections"])}):\n\n{c["text"]}'
+            prompt = META_PROMPT.format(article=a["title"], sections=", ".join(c["sections"]), text=c["text"])
+            wiki_items.append((f"Wikipedia: {a['title']} #{i}", prompt, content))
+    own_items = [(f"Mjoelnir-Erklärtext: {short_name(t)} #0", OWN_PROMPT.format(topic=short_name(t)), None)
+                 for t in TOPICS]
+    chain_items = [(f"Mjoelnir-Wirkungskette: {short_name(t)} #0", CHAIN_PROMPT.format(topic=t), None)
+                   for t in CHAIN_TOPICS]
 
     chunks = []
-    for (article, i, chunk), meta in zip(wiki_items, metas):
-        if isinstance(meta, Exception):
-            print(f"  skipped {article['title']} #{i}: {meta}")
-            continue
-        content = f'Aus dem Wikipedia-Artikel „{article["title"]}“ ({", ".join(chunk["sections"])}):\n\n{chunk["text"]}'
-        chunks.append(to_chunk(meta, content, f"Wikipedia: {article['title']} #{i}", len(chunks)))
-    own_topics = []
-    for topic, own in zip(TOPICS, owns):
-        if isinstance(own, Exception):
-            print(f"  skipped own text {topic}: {own}")
-            continue
-        name = re.sub(r"\s*\(.*\)$", "", topic)
-        own_topics.append(name)
-        chunks.append(to_chunk(own, own.content, f"Mjoelnir-Erklärtext: {name} #0", len(chunks)))
+    for label, llm, items in (("Wikipedia metadata", llm_meta, wiki_items), ("Own texts", llm_own, own_items),
+                              ("Cause -> effect chains", llm_chain, chain_items)):
+        for chunk in generate(llm, label, items, previous):
+            chunk["id"] = len(chunks)
+            chunks.append(chunk)
+    own_topics = [c for c in chunks if c["sources"][0].startswith("Mjoelnir-")]
 
     json.dump(chunks, open(f"{OUT_DIR}/extracted_v2_all.json", "w", encoding="utf-8"), ensure_ascii=False)
     attribution = [{k: a[k] for k in ("title", "url", "revid")} for a in articles]
     json.dump(attribution, open(f"{OUT_DIR}/attribution.json", "w", encoding="utf-8"), ensure_ascii=False, indent=1)
     open(f"{OUT_DIR}/lizenzen.html", "w", encoding="utf-8").write(lizenzen_html(articles, own_topics))
-    n_wiki = sum(1 for c in chunks if c["sources"][0].startswith("Wikipedia"))
-    print(f"{len(chunks)} chunks ({n_wiki} Wikipedia, {len(chunks) - n_wiki} own texts) -> {OUT_DIR}")
+    kinds = Counter(c["sources"][0].split(":")[0] for c in chunks)
+    print(f"{len(chunks)} chunks ({dict(kinds)}) -> {OUT_DIR}")
+
+
+# ---------------------------------------------------------------------------
+# Stage 3: concept normalization
+# ---------------------------------------------------------------------------
+
+
+class Canonical(BaseModel):
+    names: List[str] = Field(..., description="Canonical name for each input name, same order and count")
+
+
+class SynonymGroups(BaseModel):
+    groups: List[List[str]] = Field(..., description="Input names grouped; names in a group mean the same thing")
+    canonical: List[str] = Field(..., description="One canonical name per group, same order as groups")
+
+
+CANON_PROMPT = """Map each capital-markets concept name below to a short canonical English name in Title Case:
+singular unless the plural is the usual term ("Interest Rates", "Stock Prices"), no articles, no explanations.
+Keep the meaning exactly: a change is part of the name only if the input names one ("Zinserhöhung" ->
+"Interest Rate Hike", but "Zinsen" -> "Interest Rates").
+Return exactly {n} names in the same order.
+
+{names}"""
+
+GROUP_PROMPT = """These capital-markets concept names look similar. Group the ones that mean exactly the same
+economic quantity, actor or event. Never group opposites or different directions ("Interest Rate Hike" vs
+"Interest Rate Cut"), a quantity with its change ("Inflation" vs "Rising Inflation"), or a part with the whole.
+Every name must be in exactly one group (single-name groups are fine). Give one canonical English Title Case
+name per group, preferably one of its members.
+
+{names}"""
+
+
+def relation_key(chunk_id, rel: dict) -> str:
+    # Same as relation_hash() in ingest_capital_chunks.py, for re-keying its cache.
+    key = json.dumps([chunk_id, rel], sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def stage_normalize(model: str, similarity: float):
+    path = f"{OUT_DIR}/extracted_v2_all.json"
+    chunks = json.load(open(path, encoding="utf-8"))
+    names = sorted({n for c in chunks for n in c["concepts"]}
+                   | {r[k] for c in chunks for r in c["relations"] for k in ("source", "target")})
+    # concept_map.json caches name -> canonical name across builds.
+    map_path = f"{OUT_DIR}/concept_map.json"
+    mapping = json.load(open(map_path, encoding="utf-8")) if os.path.exists(map_path) else {}
+    llm = ChatOpenAI(model=model, temperature=0, max_retries=10, timeout=120)
+
+    # 1. Every name -> canonical English name (translates German names, unifies spelling).
+    todo = [n for n in names if n not in mapping]
+    print(f"Canonical names: {len(names)} names ({len(todo)} new) ...")
+    batches = [todo[i:i + 80] for i in range(0, len(todo), 80)]
+    results = run_batch(llm.with_structured_output(Canonical),
+                        [CANON_PROMPT.format(n=len(b), names="\n".join(b)) for b in batches])
+    for batch, result in zip(batches, results):
+        ok = not isinstance(result, Exception) and len(result.names) == len(batch)
+        mapping.update(dict(zip(batch, (n.strip() for n in result.names))) if ok else {n: n for n in batch})
+
+    # 2. Near-duplicate canonical names (embedding clusters) are merged where the LLM confirms synonyms.
+    canon = sorted({mapping[n] for n in names})
+    vectors = np.array(OpenAIEmbeddings(model="text-embedding-3-large", timeout=120).embed_documents(canon))
+    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+    labels = AgglomerativeClustering(n_clusters=None, metric="cosine", linkage="average",
+                                     distance_threshold=1 - similarity).fit_predict(vectors)
+    clusters = [c for c in ([canon[i] for i in np.where(labels == k)[0]] for k in set(labels)) if len(c) > 1]
+    print(f"Merging: {len(canon)} canonical names, {len(clusters)} candidate clusters ...")
+    merge = {}
+    results = run_batch(llm.with_structured_output(SynonymGroups),
+                        [GROUP_PROMPT.format(names="\n".join(c)) for c in clusters])
+    for cluster, result in zip(clusters, results):
+        if isinstance(result, Exception) or len(result.groups) != len(result.canonical):
+            continue
+        for group, name in zip(result.groups, result.canonical):
+            for member in group:
+                if member in cluster and len(group) > 1:
+                    merge[member] = name.strip()
+    final = {n: merge.get(mapping[n], mapping[n]) for n in names}
+
+    # 3. Apply to the chunks. Re-key the relation cache of ingest_capital_chunks.py, so relations whose
+    # only change is a renamed end are not classified again.
+    cache_path = f"{OUT_DIR}/relation_classes.json"
+    cache = json.load(open(cache_path, encoding="utf-8")) if os.path.exists(cache_path) else {}
+    rekeyed = 0
+    for c in chunks:
+        c["concepts"] = list(dict.fromkeys(final[n] for n in c["concepts"]))
+        for rel in c["relations"]:
+            old = relation_key(c["id"], rel)
+            rel["source"], rel["target"] = final[rel["source"]], final[rel["target"]]
+            new = relation_key(c["id"], rel)
+            if old in cache and new not in cache:
+                cache[new] = cache[old]
+                rekeyed += 1
+    json.dump(chunks, open(path, "w", encoding="utf-8"), ensure_ascii=False)
+    json.dump(mapping, open(map_path, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
+    if cache:
+        json.dump(cache, open(cache_path, "w", encoding="utf-8"), ensure_ascii=False)
+    print(f"{len(names)} names -> {len(set(final.values()))} concepts, {rekeyed} cached relation classes re-keyed")
 
 
 LIZENZ_TEMPLATE = """<!doctype html>
@@ -406,9 +699,9 @@ LIZENZ_TEMPLATE = """<!doctype html>
 
 		<h2>Eigene Erklärtexte</h2>
 		<p>
-			Zusätzlich enthält die Wissensbasis {n_own} eigene Erklärtexte zu allgemeinen Kapitalmarktthemen. Sie
-			wurden für diese Website mit Hilfe eines KI-Sprachmodells erstellt und sind in der Quellenliste des Chats
-			als „Mjoelnir-Erklärtext“ gekennzeichnet.
+			Zusätzlich enthält die Wissensbasis {n_own} eigene Texte zu allgemeinen Kapitalmarktthemen und zu
+			Wirkungsketten zwischen Märkten. Sie wurden für diese Website mit Hilfe eines KI-Sprachmodells erstellt und
+			sind in der Quellenliste des Chats als „Mjoelnir-Erklärtext“ bzw. „Mjoelnir-Wirkungskette“ gekennzeichnet.
 		</p>
 
 		<a class="back" href="/">← Zurück zum Chat</a> · <a class="back" href="/impressum">Impressum</a> · <a class="back" href="/datenschutz">Datenschutz</a>
@@ -420,7 +713,16 @@ LIZENZ_TEMPLATE = """<!doctype html>
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--stage", choices=["fetch", "build"], required=True)
-    parser.add_argument("--model", default="gpt-4o-mini")
+    parser.add_argument("--stage", choices=["fetch", "build", "normalize"], required=True)
+    # gpt-4o-mini shares its daily request limit with the chat, so the build uses gpt-4.1-mini.
+    parser.add_argument("--model", default="gpt-4.1-mini")
+    parser.add_argument("--chain_model", default="gpt-4.1")
+    # Cosine similarity above which canonical concept names become merge candidates.
+    parser.add_argument("--similarity", type=float, default=0.85)
     args = parser.parse_args()
-    stage_fetch() if args.stage == "fetch" else stage_build(args.model)
+    if args.stage == "fetch":
+        stage_fetch()
+    elif args.stage == "build":
+        stage_build(args.model, args.chain_model)
+    else:
+        stage_normalize(args.model, args.similarity)
