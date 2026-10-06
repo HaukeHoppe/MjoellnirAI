@@ -115,6 +115,7 @@ services:
 
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./guest.css:/etc/caddy/guest.css:ro   # served to visitors as /static/custom.css
       - caddy-data:/data       # certificates and ACME account; keep it to avoid Let's Encrypt rate limits
       - caddy-config:/config
 
