@@ -82,10 +82,10 @@ class ChunkClass(BaseModel):
     reason: str = Field(..., description="One short sentence explaining the choice.")
 
 
-CLASSIFY_PROMPT = """You classify a chunk from a transcribed capital-markets video by one creator.
+CLASSIFY_PROMPT = """You classify a chunk from a capital-markets knowledge source (a transcribed video, an encyclopedia article or an explanatory text).
 
 concept = evergreen teaching content: how markets, instruments or economic mechanisms work, historical regularities, general principles or strategies. It stays correct no matter when it was said.
-opinion = time-bound content: the creator's view of the current market, forecasts, expectations, positioning, trade ideas, or commentary on current prices, recent moves or upcoming events. It decays over time.
+opinion = time-bound content: the author's view of the current market, forecasts, expectations, positioning, trade ideas, or commentary on current prices, recent moves or upcoming events. It decays over time.
 
 If the chunk contains ANY current market assessment, forecast or recommendation, classify it as opinion, even if it also explains a concept. Presenting a stale view as timeless is the worse mistake.
 
@@ -153,7 +153,7 @@ class RelationClass(BaseModel):
     )
 
 
-RELATION_PROMPT = """You classify one cause -> effect relation extracted from a capital-markets video.
+RELATION_PROMPT = """You classify one cause -> effect relation extracted from a capital-markets source.
 
 timeless = a general mechanism that holds no matter when it was said (e.g. "Steigende Zinsen drücken die Anleihepreise").
 time-bound = refers to the current market situation, specific current levels, dates or events, a forecast, or a positioning / trade idea.
@@ -214,7 +214,7 @@ class ClusterSummary(BaseModel):
     content: str = Field(..., description="The canonical explanation in German.")
 
 
-SUMMARIZE_PROMPT = """The passages below are the same creator explaining the same concept in different videos.
+SUMMARIZE_PROMPT = """The passages below explain the same concept and come from different sources.
 Write ONE canonical explanation in German that combines them.
 - Use only statements contained in the passages. Do not add outside knowledge.
 - Keep the mechanisms (cause -> effect) and the conditions under which they hold.

@@ -4,7 +4,7 @@ author: Mjoelnir AI
 date: 2026-09-25
 version: 0.3
 license: MIT
-description: RAG over the capital-markets chunks in faiss_capital_index (built from extracted_v2_all.json by ingest_capital_chunks.py). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their video, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
+description: RAG over the capital-markets chunks in faiss_capital_index (built from extracted_v2_all.json by ingest_capital_chunks.py). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their source, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
 requirements: langchain-community,langchain-openai,langchain-core,faiss-cpu,openai,pydantic,rank-bm25,numpy
 """
 
@@ -98,11 +98,11 @@ Stay faithful to the wording of the sources:
 - Keep their degree of certainty: "könnte" / "kann" stays a possibility, never "typischerweise" or "immer".
 - Only state a cause -> effect link that the context states as such. Do not join two separate statements into a new cause -> effect link.
 
-The context blocks are from videos by one capital-markets creator and come in two kinds:
+The context blocks come from the indexed capital-markets sources (each block label names its source) and come in two kinds:
 - CONCEPT blocks are timeless explanations. You may state them as general explanations.
-- OPINION blocks are time-bound views, forecasts or positioning as stated in the named video. Always attribute them to that video in the same paragraph, using the video title exactly as written in the block label without the [id] and #n (e.g. "Im Video Marktkommentar Mai 2026 schätzte er ... ein"). Never present them as current facts or as a current recommendation.
-- Exception: a "Relation [TIMELESS]" line is a general mechanism, even inside an OPINION block. You may state it as a general explanation. Everything else in an OPINION block, including "Relation [TIME-BOUND]" lines, must be attributed to its video.
-- If opinion blocks from different videos disagree, show each view with its video and say that they differ. Do not merge them into one view, and do not end with a summary or conclusion that combines views from different videos.
+- OPINION blocks are time-bound views, forecasts or positioning as stated in the named source. Always attribute them to that source in the same paragraph, using the source title exactly as written in the block label without the [id] and #n (e.g. "Laut Marktkommentar Mai 2026 ..."). Never present them as current facts or as a current recommendation.
+- Exception: a "Relation [TIMELESS]" line is a general mechanism, even inside an OPINION block. You may state it as a general explanation. Everything else in an OPINION block, including "Relation [TIME-BOUND]" lines, must be attributed to its source.
+- If opinion blocks from different sources disagree, show each view with its source and say that they differ. Do not merge them into one view, and do not end with a summary or conclusion that combines views from different sources.
 
 Answer in the language of the question.
 
@@ -117,15 +117,15 @@ Split the answer into individual claims. Every reason or explanation ("weil ..."
 Write every claim self-contained: replace "dadurch", "dies", "was", "somit", "this" etc. with what they refer to, so each claim names its own cause (e.g. "Sinkende Zinsen steigern die Nachfrage nach Anleihen", not "Die Nachfrage steigt dadurch").
 
 For each claim:
-- kind: "meta" if it only says what the sources do or do not cover, or only compares / contrasts claims from the context (e.g. "the two videos recommend different positions") without adding any information of its own. Everything else is "fact". A meta statement that adds any new information is a "fact".
+- kind: "meta" if it only says what the sources do or do not cover, or only compares / contrasts claims from the context (e.g. "the two sources recommend different positions") without adding any information of its own. Everything else is "fact". A meta statement that adds any new information is a "fact".
 - quote (facts only): copy, character for character, ONE sentence from the context that states the claim. Never join several sentences. Only exception: if that sentence starts with a pronoun referring to the sentence directly before it ("Sie", "Er", "Es", "Dies", "Diese", "It", "This", ...), copy both consecutive sentences. If no single sentence states it, the claim is unsupported and quote stays empty. For meta claims leave it empty.
 - supported: for a fact, true only if the quote states the claim - general knowledge does NOT count, even if the claim is true. For a meta claim, true if it accurately describes the context.
 
 The quote must state the claim itself: same cause, same effect, same degree of certainty. A fact is unsupported if it:
 - turns a possibility ("könnte", "kann", "may") into a rule ("typischerweise", "immer", "typically");
 - links a cause and an effect that the context mentions only separately, or links the effect to a different cause. If the quote names a different cause than the claim (claim: falling rates raise demand; quote: investor confidence raises demand), the claim is unsupported;
-- attributes a view to the wrong video.
-A statement that merges different views from different videos into one is unsupported (fact or meta).
+- attributes a view to the wrong source.
+A statement that merges different views from different sources into one is unsupported (fact or meta).
 
 claim_cause / quote_cause / same_cause: for every claim that states a cause -> effect, write down the cause the claim names and the cause the quote gives for the same effect, then set same_cause. Example: claim "Sinkende Zinsen steigern die Nachfrage nach Anleihen", quote "Wenn Investoren Vertrauen zurückgewinnen, ... steigt die Nachfrage" -> claim_cause "sinkende Zinsen", quote_cause "Vertrauen der Investoren", same_cause false.
 answer_sentence: the sentence of the answer the claim was taken from, copied verbatim (before you rewrote the claim).
@@ -138,7 +138,7 @@ Answer:
 
 REVISE_PROMPT = """Rewrite the answer to fix the problems listed below.
 - "not stated in the sources": remove the statement. Do not replace it with a sentence that repeats or denies it ("Die Quellen erklären nicht, dass ...") - that is a new claim about the sources and often wrong. Only if the removal leaves part of the question unanswered, you may add one general note such as "Zu <Aspekt der Frage> sagen die Quellen nichts."
-- "missing video attribution": keep the statement but name the given video title in the same paragraph (e.g. "Im Video <title> ...").
+- "missing source attribution": keep the statement but name the given source title in the same paragraph (e.g. "Laut <title> ...").
 - "merges separate statements": keep the content but write each source statement as its own sentence with its citation; do not connect them with "wobei", "da", "weil" etc.
 Do not add any new information. Keep the citations [1], [2], ... of the remaining statements. Answer in the language of the question.
 Return only the rewritten answer text, without a heading or label such as "Answer:".
@@ -155,7 +155,7 @@ Problems:
 {unsupported}"""
 
 EXPLORE_PROMPT = """{situation}
-Below are topics that ARE covered in the indexed videos of a capital-markets creator, each with an excerpt from the videos.
+Below are topics that ARE covered in the indexed capital-markets sources, each with an excerpt from the sources.
 
 Pick up to {n} topics {goal}.
 For each picked topic:
@@ -170,11 +170,11 @@ Topics:
 {topics}"""
 
 EXPLORE_NO_ANSWER = (
-    "The user asked a question that the videos do not answer.",
+    "The user asked a question that the sources do not answer.",
     "that are most closely related to what the user wanted to know, so they can explore nearby material instead",
 )
 EXPLORE_ANSWERED = (
-    "The user asked a question and already got an answer from the videos.",
+    "The user asked a question and already got an answer from the sources.",
     "the user would most likely want to explore next to deepen or broaden that answer. Do not pick topics that only repeat the question",
 )
 
@@ -717,7 +717,7 @@ class Pipeline:
                 if names_video(paragraph_of(answer, claim.answer_sentence), videos):
                     continue
                 titles = " / ".join(f'"{title}"' for title, _ in videos)
-                problem = f"missing video attribution: name the video {titles} in this paragraph"
+                problem = f"missing source attribution: name the source {titles} in this paragraph"
             else:
                 continue
             print(f"[capital_rag] {problem}: {claim.claim!r} (quote: {claim.quote!r})")
