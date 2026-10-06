@@ -27,13 +27,24 @@
 		-Server
 	}
 
+	# Site password (browser prompt) while the site has no Impressum/Datenschutzerklaerung: nothing of
+	# Open WebUI is visible without it. Requests carrying an Open WebUI token skip the prompt, because the
+	# app sends that token in the same Authorization header; Open WebUI checks it itself.
+	# To open the site to the public, delete these lines and reload Caddy.
+	@site_locked not header Authorization "Bearer *"
+	basic_auth @site_locked {
+		{$SITE_USER} {$SITE_PASSWORD_HASH}
+	}
+
 	# The guest account is shared by all visitors: nobody may rename it, change its picture or password.
 	@guest_account path /api/v1/auths/update/profile /api/v1/auths/update/password
 	respond @guest_account "Not available for the guest account" 403
 
 	# Open WebUI loads /static/custom.css on every page; visitors get guest.css instead, which hides the
 	# user menu (settings, sign out) and the "You're now logged in" toast.
+	# no-cache: browsers revalidate it on every load, so a cached older custom.css never wins.
 	handle /static/custom.css {
+		header Cache-Control "no-cache"
 		root * /etc/caddy
 		rewrite * /guest.css
 		file_server
