@@ -266,6 +266,11 @@ reachable through an SSH tunnel:
 2. In the VPS `.env` set `WEBUI_AUTH_TRUSTED_EMAIL_HEADER=X-Webui-Email`, `GUEST_EMAIL=<guest account email>`,
    `ADMIN_EMAIL=<your admin email>` and append `;http://localhost:8081` to `CORS_ALLOW_ORIGIN`; then `docker compose up -d`.
 3. Admin access: `ssh -L 8081:127.0.0.1:8081 <vps>`, then open `http://localhost:8081`.
+4. Make it a plain anonymous chat: Admin Panel → Users → Groups → Default permissions: enable
+   *Temporary Chat Enforced* (nothing saved, guests do not see each other's chats) and switch off what guests
+   should not use (file upload, voice, chat controls/valves/system prompt, share/export/import, notes, channels,
+   folders, memories, calendar, web search, image generation, code interpreter, interface settings).
+   Caddy already rejects profile and password changes for the guest account.
 
 Set a spending limit on the OpenAI key: anyone can now use it through the chat.
 
