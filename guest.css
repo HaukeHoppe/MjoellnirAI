@@ -12,3 +12,10 @@ button:has(img[src*="/users/"][src*="/profile/image"]) {
 [data-sonner-toast][data-type='success'] {
 	display: none !important;
 }
+
+/* Impressum banner: just the link, without the "Info" label and the close button (it would only hide the
+   banner until the next page load anyway). Matched by the link, not by texts that change with the language. */
+div:has(> div > div > p > a[href='/impressum']) > div .uppercase,
+div:has(> div > div > p > a[href='/impressum']) > div > button {
+	display: none !important;
+}
