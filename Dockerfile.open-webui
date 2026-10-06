@@ -4,3 +4,11 @@ FROM ghcr.io/open-webui/open-webui:v0.11.4
 COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Start-screen text in the message box (and above it when no model is selected): Open WebUI has no setting for
+# it, so the translation call in the built frontend gets the German question instead. Only the calls t("...")
+# change, not the translation tables. Fails the build if a new release no longer contains the call.
+RUN files=$(grep -rlF 't("How can I help you today?")' /app/build/_app/immutable) \
+    && test -n "$files" \
+    && sed -i 's/t("How can I help you today?")/t("Welche Ursache-Wirkungskette am Finanzmarkt interessiert dich?")/g' $files \
+    && ! grep -rqF 't("How can I help you today?")' /app/build/_app/immutable
