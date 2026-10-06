@@ -31,9 +31,20 @@
 	# Open WebUI is visible without it. Requests carrying an Open WebUI token skip the prompt, because the
 	# app sends that token in the same Authorization header; Open WebUI checks it itself.
 	# To open the site to the public, delete these lines and reload Caddy.
-	@site_locked not header Authorization "Bearer *"
+	# The legal pages stay reachable without it (Impressum must be accessible to everyone).
+	@site_locked {
+		not header Authorization "Bearer *"
+		not path /impressum
+	}
 	basic_auth @site_locked {
 		{$SITE_USER} {$SITE_PASSWORD_HASH}
+	}
+
+	# Legal pages from ./legal, outside Open WebUI; linked from a banner in the chat.
+	handle /impressum {
+		root * /etc/caddy/legal
+		rewrite * /impressum.html
+		file_server
 	}
 
 	# The guest account is shared by all visitors: nobody may rename it, change its picture or password.

@@ -280,6 +280,10 @@ prompt before anything of Open WebUI loads. Set `SITE_USER` and `SITE_PASSWORD_H
 `docker exec caddy caddy hash-password --plaintext '<password>'`, in single quotes) in the VPS `.env`.
 To open the site publicly, delete the `basic_auth` lines in the [`Caddyfile`](Caddyfile) and reload Caddy.
 
+**Impressum.** Caddy serves [`legal/impressum.html`](legal/impressum.html) at `/impressum`, also without the site
+password. Open WebUI links to it through a non-dismissible banner (Admin Panel → Settings → Interface → Banners)
+with the content `[Impressum](/impressum)`.
+
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
 > The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
