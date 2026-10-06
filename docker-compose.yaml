@@ -12,15 +12,30 @@ services:
       dockerfile: Dockerfile.open-webui
     container_name: open-webui
 
+    # Localhost only: expose it publicly through a TLS reverse proxy or tunnel
+    # (Caddy, Cloudflare Tunnel, Tailscale), never as plain HTTP.
     ports:
-      - "3000:8080"
+      - "127.0.0.1:3000:8080"
 
     volumes:
       - ./pdfs:/data
       - ./open-webui-data:/app/backend/data
 
     environment:
-      - ENABLE_SIGNUP=true
+      # No public self-registration; new accounts (if signup is re-enabled) wait for admin approval.
+      # Both are persistent settings: once stored in the DB, the Admin Panel value wins over these.
+      - ENABLE_SIGNUP=false
+      - DEFAULT_USER_ROLE=pending
+      # VPS: signs every request in as the account whose email is in this header. Caddy sets it
+      # (guest user on WEBUI_URL, admin on the SSH-tunnel port), so visitors see no login screen.
+      # Empty locally = normal login. With it set, a request without the header cannot log in.
+      - WEBUI_AUTH_TRUSTED_EMAIL_HEADER=${WEBUI_AUTH_TRUSTED_EMAIL_HEADER:-}
+      # Fixed signing key so sessions survive container rebuilds; public URL for links and OAuth.
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:?set WEBUI_SECRET_KEY in .env}
+      - WEBUI_URL=${WEBUI_URL:-http://localhost:3000}
+      # Only these origins may call the API and open the chat websocket (default '*' = any website).
+      # Must match the browser address exactly: scheme + host, no trailing slash; separate several with ';'.
+      - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
       - PIPELINES_URL=http://pipelines:9099
 
     restart: always
@@ -41,8 +56,8 @@ services:
 
     container_name: open-webui-pipelines
 
-    ports:
-      - "9099:9099"
+    # No published ports: Open WebUI reaches the pipelines servers over the internal
+    # compose network. Anyone holding the API key can upload and run Python code here.
 
     volumes:
       - ./pdfs:/data
@@ -51,6 +66,7 @@ services:
       # Pipeline print() output (e.g. rejected claims) shows up in docker logs immediately.
       - PYTHONUNBUFFERED=1
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY:?set PIPELINES_API_KEY in .env}
 
     restart: always
 
@@ -59,7 +75,7 @@ services:
   # Open WebUI Pipelines #2 - Capital Markets RAG
   # Loads pipelines-capital/capital_rag_pipeline.py on startup.
   # Add in Open WebUI as a second connection:
-  #   http://pipelines-capital:9099  (key: 0p3n-w3bu!)
+  #   http://pipelines-capital:9099  (key: PIPELINES_API_KEY from .env)
   # =====================================================
 
   pipelines-capital:
@@ -69,9 +85,6 @@ services:
 
     container_name: open-webui-pipelines-capital
 
-    ports:
-      - "9098:9099"
-
     volumes:
       - ./pdfs:/data
       - ./pipelines-capital:/app/pipelines
@@ -79,3 +92,47 @@ services:
     environment: *pipelines_env
 
     restart: always
+
+
+  # =====================================================
+  # Caddy - HTTPS reverse proxy (VPS only)
+  # Only starts with the "vps" profile: set COMPOSE_PROFILES=vps in the VPS .env.
+  # Serves WEBUI_URL with an automatic Let's Encrypt certificate and forwards
+  # to open-webui:8080 over the internal network. See Caddyfile.
+  # =====================================================
+
+  caddy:
+    image: caddy:2.11-alpine
+    container_name: caddy
+    profiles: ["vps"]
+
+    ports:
+      - "80:80"         # ACME HTTP challenge + redirect to HTTPS
+      - "443:443"       # HTTPS
+      - "443:443/udp"   # HTTP/3
+      # Admin entrance, localhost only: reach it with  ssh -L 8081:127.0.0.1:8081 <vps>
+      - "127.0.0.1:8081:8081"
+
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./guest.css:/etc/caddy/guest.css:ro   # served to visitors as /static/custom.css
+      - caddy-data:/data       # certificates and ACME account; keep it to avoid Let's Encrypt rate limits
+      - caddy-config:/config
+
+    environment:
+      # Not ":?"-required: compose checks variables of inactive profiles too, which would break
+      # every local command. If either is empty, Caddy refuses to start and names the line.
+      - WEBUI_URL=${WEBUI_URL:-}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+      - GUEST_EMAIL=${GUEST_EMAIL:-}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-}
+
+    restart: always
+
+    depends_on:
+      - open-webui
+
+
+volumes:
+  caddy-data:
+  caddy-config:

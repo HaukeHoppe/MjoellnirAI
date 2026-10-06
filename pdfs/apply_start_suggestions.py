@@ -8,7 +8,7 @@ Edit creates); an existing entry keeps its other settings. A new entry gets
 public read access, like a model without an entry has.
 
 Run inside the open-webui container:
-    docker exec -w /app/backend open-webui sh -c 'WEBUI_SECRET_KEY="$(cat .webui_secret_key)" python /data/apply_start_suggestions.py'
+    docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
 Then reload the browser tab.
 """
 

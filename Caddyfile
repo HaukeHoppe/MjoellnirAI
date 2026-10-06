@@ -1,0 +1,56 @@
+# HTTPS entry point for Open WebUI on a VPS (compose profile "vps").
+# The site address is WEBUI_URL from .env, e.g. https://chat.example.com. Caddy obtains and
+# renews a certificate for that domain automatically and redirects HTTP to HTTPS.
+# Requirements: the domain's DNS A/AAAA record points at the VPS, ports 80 and 443 are open.
+
+{
+	# With an email set, Caddy falls back from Let's Encrypt to ZeroSSL when Let's Encrypt
+	# refuses (e.g. its 50-certificates-per-domain limit on shared hoster domains).
+	email {$ACME_EMAIL}
+}
+
+{$WEBUI_URL} {
+	encode zstd gzip
+
+	# Private instance: keep it out of search engines. Open WebUI's robots.txt already
+	# disallows crawling; this header also covers bots that skip robots.txt.
+	header X-Robots-Tag "noindex, nofollow, noarchive"
+
+	# Browser hardening: HTTPS only for a year (HSTS), no MIME sniffing, no framing by other
+	# sites (clickjacking), no full URLs leaked to other sites. No CSP: Open WebUI loads inline
+	# scripts and styles that a strict policy would break.
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# The guest account is shared by all visitors: nobody may rename it, change its picture or password.
+	@guest_account path /api/v1/auths/update/profile /api/v1/auths/update/password
+	respond @guest_account "Not available for the guest account" 403
+
+	# Open WebUI loads /static/custom.css on every page; visitors get guest.css instead, which hides the
+	# user menu (settings, sign out) and the "You're now logged in" toast.
+	handle /static/custom.css {
+		root * /etc/caddy
+		rewrite * /guest.css
+		file_server
+	}
+
+	# No login for visitors: every request is signed in as the shared guest account (role "user",
+	# no admin rights). header_up overwrites any value the client sends, so it cannot be forged.
+	# Chat streaming (SSE) and websockets are proxied without extra config.
+	reverse_proxy open-webui:8080 {
+		header_up X-Webui-Email {$GUEST_EMAIL}
+	}
+}
+
+# Admin entrance: published on 127.0.0.1:8081 of the VPS only (see docker-compose.yaml), so it is
+# reachable only through an SSH tunnel: ssh -L 8081:127.0.0.1:8081 <vps>, then http://localhost:8081
+http://:8081 {
+	reverse_proxy open-webui:8080 {
+		header_up X-Webui-Email {$ADMIN_EMAIL}
+	}
+}
