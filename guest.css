@@ -50,9 +50,5 @@ div.h-36:has(button.waterfall) {
 	padding-bottom: 1.5rem !important;
 }
 
-/* Very short screens: the questions stay complete, only the short chain hints under them are hidden. */
-@media (max-height: 700px) {
-	button.waterfall .text-xs {
-		display: none !important;
-	}
-}
+/* The chain hint under each question (Auslöser → … → Wirkung) shows on every screen height: it tells the
+   visitor which cause -> effect chain the question explains. */
