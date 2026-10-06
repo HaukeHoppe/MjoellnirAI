@@ -280,9 +280,21 @@ prompt before anything of Open WebUI loads. Set `SITE_USER` and `SITE_PASSWORD_H
 `docker exec caddy caddy hash-password --plaintext '<password>'`, in single quotes) in the VPS `.env`.
 To open the site publicly, delete the `basic_auth` lines in the [`Caddyfile`](Caddyfile) and reload Caddy.
 
-**Impressum.** Caddy serves [`legal/impressum.html`](legal/impressum.html) at `/impressum`, also without the site
-password. Open WebUI links to it through a non-dismissible banner (Admin Panel → Settings → Interface → Banners)
-with the content `[Impressum](/impressum)`.
+**Impressum and Datenschutzerklärung.** Caddy serves [`legal/impressum.html`](legal/impressum.html) at `/impressum`
+and [`legal/datenschutz.html`](legal/datenschutz.html) at `/datenschutz`, also without the site password. Open WebUI
+links to both through a non-dismissible banner (Admin Panel → Settings → Interface → Banners) with the content
+`[Impressum](/impressum) · [Datenschutz](/datenschutz)`. Keep the privacy policy in sync with the setup: hoster,
+OpenAI, the browser storage it lists, temporary chats, and the 14-day log retention below.
+
+**Log retention (14 days).** The logs contain visitor IP addresses and model output derived from chats. On the VPS
+set `LOG_DRIVER=journald` in `.env` and limit the journal:
+
+```bash
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nMaxRetentionSec=14day\nMaxFileSec=1day\n' > /etc/systemd/journald.conf.d/retention.conf
+systemctl restart systemd-journald
+docker compose up -d   # recreates the containers with the new log driver; docker logs keeps working
+```
 
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
 > The compose file also starts a separate climate test pipeline; it is not part of this documentation.
