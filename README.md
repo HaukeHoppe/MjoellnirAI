@@ -281,12 +281,9 @@ prompt before anything of Open WebUI loads. Set `SITE_USER` and `SITE_PASSWORD_H
 To open the site publicly, delete the `basic_auth` lines in the [`Caddyfile`](Caddyfile) and reload Caddy.
 
 **Impressum and Datenschutzerklärung.** Caddy serves [`legal/impressum.html`](legal/impressum.html) at `/impressum`
-and [`legal/datenschutz.html`](legal/datenschutz.html) at `/datenschutz`, also without the site password. Open WebUI
-links to both through a non-dismissible banner (Admin Panel → Settings → Interface → Banners) with the content
-`[Impressum](/impressum) · [Datenschutz](/datenschutz)`. Open WebUI shows that banner only on the empty start
-screen, so Caddy also inserts a small permanent footer with both links into every page (bottom right, top right on
-phones); this needs the `replace-response` plugin, which is why Caddy is built from
-[`Dockerfile.caddy`](Dockerfile.caddy). Keep the privacy policy in sync with the setup: hoster,
+and [`legal/datenschutz.html`](legal/datenschutz.html) at `/datenschutz`, also without the site password. Caddy inserts
+a small permanent footer with both links into every Open WebUI page (bottom right); this needs the `replace-response`
+plugin, which is why Caddy is built from [`Dockerfile.caddy`](Dockerfile.caddy). Keep the privacy policy in sync with the setup: hoster,
 OpenAI, the browser storage it lists, temporary chats, and the 14-day log retention below.
 
 **Log retention (14 days).** The logs contain visitor IP addresses and model output derived from chats. On the VPS
