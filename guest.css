@@ -13,18 +13,18 @@ button:has(img[src*="/users/"][src*="/profile/image"]) {
 	display: none !important;
 }
 
-/* Impressum banner: just the link, without the "Info" label and the close button (it would only hide the
-   banner until the next page load anyway). Matched by the link, not by texts that change with the language. */
-div:has(> div > div > p > a[href='/impressum']) > div .uppercase,
-div:has(> div > div > p > a[href='/impressum']) > div > button {
+/* No sidebar for visitors: chats are temporary, so there is no history to browse. Hides the collapsed rail
+   (desktop), the expanded panel and the phone's open-sidebar button. */
+#sidebar,
+#sidebar-toggle-button,
+div.select-none:has(#sidebar-new-chat-button) {
 	display: none !important;
 }
 
-/* Legal footer (inserted by Caddy, see Caddyfile): on phones the chat input sits at the bottom edge,
-   so the links move to the free top-right corner there. */
+/* Legal footer (inserted by Caddy, see Caddyfile): on phones the chat input reaches the bottom edge,
+   so it gets a little space below for the footer. */
 @media (max-width: 767px) {
-	#legal-footer {
-		top: 6px !important;
-		bottom: auto !important;
+	form:has(#chat-input) {
+		margin-bottom: 14px !important;
 	}
 }
