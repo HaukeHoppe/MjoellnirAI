@@ -12,6 +12,8 @@ open-webui-data/
 pdfs/faiss_climate_index/
 pdfs/faiss_capital_index/
 pdfs/faiss_public_index/
+# eval_chains.py results (answers and scores of a run)
+pdfs/eval_*.json
 *.faiss
 *.pkl
 
