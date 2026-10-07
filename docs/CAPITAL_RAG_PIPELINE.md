@@ -4,6 +4,12 @@ Technical documentation of the Capital Markets RAG pipeline: what it does, how d
 through it, how it keeps the model from hallucinating, and what happens when a step fails.
 For the design rationale behind each step, see [`CAPITAL_RAG_BEST_PRACTICES.md`](CAPITAL_RAG_BEST_PRACTICES.md).
 
+> **Scope.** This reference explains the core pipeline with its original corpus, transcribed capital-markets videos
+> (`faiss_capital_index`), as the running example. The public site runs the same pipeline on the public knowledge base
+> (`faiss_public_index`: Wikipedia, own explanatory texts and cause → effect chain texts). The newer steps (causal
+> chain search, chain-step chunks, corroboration) and the evaluation are described in the
+> [README](../README.md#how-a-question-is-answered).
+
 | File | Role |
 |------|------|
 | [`data/ingest_capital_chunks.py`](../data/ingest_capital_chunks.py) | Offline ingestion: classification, embedding, summaries, concept graph |
@@ -70,7 +76,7 @@ flowchart LR
   `/app/pipelines`, so `capital_rag_pipeline.py` is loaded automatically on startup. Valve values
   saved in the UI are persisted to `pipelines-capital/capital_rag_pipeline/valves.json`.
 - The **index is not built in the container at startup.** It is created once, offline, by
-  `ingest_capital_chunks.py` and read from `/data/faiss_capital_index`.
+  `ingest_capital_chunks.py` and read from `INDEX_DIR` (default `/data/faiss_public_index`).
 - `OPENAI_API_KEY` comes from `.env` through `${OPENAI_API_KEY}` in the compose file.
 - **Add the pipelines server as a connection in Open WebUI yourself**: *Admin Panel → Settings → Connections → OpenAI API → +*
   with URL `http://pipelines-capital:9099` and the Pipelines API key (`PIPELINES_API_KEY` from `.env`). The pipelines
@@ -228,10 +234,10 @@ flowchart TD
     I -->|no| ERR[message: run ingestion]
     I -->|yes| R[5.2 Fusion retrieval<br/>dense HyPE + BM25 → top 12]
     R --> GX[5.3 Graph expansion<br/>+ up to 4 chunks with same relation]
-    GX --> GR[5.4 LLM grading per chunk<br/>keep supports_answer AND relevance ≥ 6<br/>top 5]
+    GX --> GR[5.4 LLM grading per chunk<br/>keep supports_answer AND relevance ≥ 6<br/>top 6]
     GR -->|none kept| NA[No answer + explorer]
     GR --> CTX[5.5 Build context blocks<br/>CONCEPT / OPINION labels,<br/>TIMELESS / TIME-BOUND relations]
-    CTX --> GEN[5.6 Generate answer<br/>gpt-4o-mini, context only]
+    CTX --> GEN[5.6 Generate answer<br/>gpt-4.1, context only]
     GEN --> CHK[5.7 Claim-by-claim check<br/>gpt-4o + code-side verification]
     CHK -->|all supported| OUT[Answer + cited sources]
     CHK -->|problems| REV[Revise with gpt-4o<br/>max 2 times]
@@ -255,7 +261,7 @@ The pipeline handles them differently from user questions:
 
 - **Follow-up task** (regex `^### Task:\s*Suggest .*follow-up questions`): answered by the explorer (§8),
   not by the LLM, so follow-up chips only offer questions the index can answer.
-- **Other tasks** (chat title, tags): passed directly to `gpt-4o-mini`.
+- **Other tasks** (chat title, tags): passed directly to `LLM_MODEL` (`gpt-4.1`).
 - If either fails, the pipeline returns `{}` so Open WebUI does not break.
 
 ### 5.2 Fusion retrieval (`_fusion_candidates`)
@@ -293,7 +299,7 @@ class Grade(BaseModel):
 ```
 
 A chunk is kept only if `supports_answer` **and** `relevance ≥ MIN_RELEVANCE (6)`. Kept chunks are sorted by
-`(relevance, fused score)` and cut to `TOP_K = 5`. The `reason` is reused later in the source list.
+`(relevance, fused score)` and cut to `TOP_K = 6`. The `reason` is reused later in the source list.
 This combines LLM reranking (`reranking.py`) with the relevance gate from reliable-RAG.
 
 ### 5.5 Context construction
@@ -533,10 +539,10 @@ Editable in *Admin Panel → Settings → Pipelines* (select the capital connect
 
 | Valve | Default | Meaning |
 |-------|---------|---------|
-| `INDEX_DIR` | `/data/faiss_capital_index` | Index location inside the container |
+| `INDEX_DIR` | `/data/faiss_public_index` | Index location inside the container (`/data/faiss_capital_index` for the video corpus) |
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | **Must match** `--embedding_model` used at ingestion |
-| `LLM_MODEL` | `gpt-4o-mini` | Answer generation and background tasks |
-| `GRADER_MODEL` | `gpt-4o-mini` | Chunk grading and explorer |
+| `LLM_MODEL` | `gpt-4.1` | Answer generation and background tasks |
+| `GRADER_MODEL` | `gpt-4.1-mini` | Chunk grading, explorer and question concepts |
 | `CHECK_MODEL` | `gpt-4o` | Claim check and revisions |
 | `FETCH_K` | 40 | Raw hits per retriever (before chunk de-duplication) |
 | `MIN_SIMILARITY` | 0.35 | Cosine floor for dense hits |
@@ -545,7 +551,7 @@ Editable in *Admin Panel → Settings → Pipelines* (select the capital connect
 | `GRAPH_SEED_K` | 3 | Top candidates used as graph seeds |
 | `GRAPH_EXPAND_K` | 4 | Max chunks added by graph expansion |
 | `MIN_RELEVANCE` | 6 | Grader relevance floor (0–10) |
-| `TOP_K` | 5 | Chunks in the final context |
+| `TOP_K` | 6 | Chunks in the final context |
 | `CHECK_ANSWER_GROUNDING` | `True` | Turn off only for debugging. Answers are then unchecked. |
 | `MAX_REVISIONS` | 2 | Rewrite attempts before trimming |
 | `SHOW_THINKING_LOG` | `False` | Full step log in a collapsible `<think>` block |
@@ -594,12 +600,12 @@ Approximate OpenAI calls per user question with the default valves:
 | Step | Model | Calls |
 |------|-------|-------|
 | Query embedding | text-embedding-3-large | 1 (+1 if the explorer falls back to nearest neighbors) |
-| Grading | gpt-4o-mini | ≤ 16 (parallel, 8 at a time) |
-| Answer | gpt-4o-mini | 1 |
+| Grading | gpt-4.1-mini | ≤ 16 (parallel, 8 at a time) |
+| Answer | gpt-4.1 | 1 |
 | Claim check | **gpt-4o** | 1–4 (initial + up to 2 after revisions + 1 after trimming) |
 | Revision | **gpt-4o** | 0–2 |
-| Explorer | gpt-4o-mini | 1 selection + ≤ 4 grading (only on no answer or the follow-up task) |
-| Title / tags tasks | gpt-4o-mini | 1 each |
+| Explorer | gpt-4.1-mini | 1 selection + ≤ 4 grading (only on no answer or the follow-up task) |
+| Title / tags tasks | gpt-4.1 | 1 each |
 
 The happy path is roughly 1 embedding, ~16 small grading calls, 1 answer and 1 `gpt-4o` check. Because the
 answer is checked before it is shown, the user waits for the whole sequence. The status line covers that wait.

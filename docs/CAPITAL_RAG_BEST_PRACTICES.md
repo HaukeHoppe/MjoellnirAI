@@ -7,6 +7,12 @@ implemented (with code references), the parameter that controls it, and the trad
 For the reference-style overview (valves, operations, cost), see
 [`CAPITAL_RAG_PIPELINE.md`](CAPITAL_RAG_PIPELINE.md).
 
+> **Scope.** This reference explains the core pipeline with its original corpus, transcribed capital-markets videos
+> (`faiss_capital_index`), as the running example. The public site runs the same pipeline on the public knowledge base
+> (`faiss_public_index`: Wikipedia, own explanatory texts and cause → effect chain texts). The newer steps (causal
+> chain search, chain-step chunks, corroboration) and the evaluation are described in the
+> [README](../README.md#how-a-question-is-answered).
+
 ---
 
 ## Contents
@@ -69,8 +75,8 @@ flowchart TB
             R[recent: LRU of 50 answered questions]
         end
         subgraph LLM clients
-            AL[answer_llm<br/>gpt-4o-mini]
-            GL[grader / explorer<br/>gpt-4o-mini, structured]
+            AL[answer_llm<br/>gpt-4.1]
+            GL[grader / explorer<br/>gpt-4.1-mini, structured]
             CL[checker / reviser<br/>gpt-4o]
         end
     end
@@ -162,7 +168,7 @@ flowchart TD
     B["BM25: top 40 chunks<br/>with score &gt; 0"] --> C
     C["Fusion: min-max + ALPHA 0.6<br/>→ top 12 candidates"] --> D
     D["Graph expansion<br/>+ up to 4 related chunks<br/>→ ≤ 16"] --> E
-    E["LLM grade each<br/>supports_answer AND relevance ≥ 6<br/>→ top 5"] --> F
+    E["LLM grade each<br/>supports_answer AND relevance ≥ 6<br/>→ top 6"] --> F
     F["Answer cites a subset"] --> G
     G["Claim check: every cited fact<br/>verified by verbatim quote"] --> H
     H["Source list: only cited blocks"]
@@ -267,14 +273,14 @@ latency predictable.
 - **Two conditions, both required:** `supports_answer == True` **and** `relevance ≥ 6`. A high score alone is not
   enough, and neither is a "yes" with a low score.
 - **Ordering:** by `(relevance, fused score)`. LLM judgment comes first and the retrieval score breaks ties. The list
-  is cut at `TOP_K = 5`.
+  is cut at `TOP_K = 6`.
 - **Parallel:** `batch(..., max_concurrency=8, return_exceptions=True)`. One failed call removes that chunk, not the
   whole request.
 - **Reuse:** the `reason` is shown to the user in the source list (E2).
 
 ### B4. Context hygiene
 
-Only the ≤ 5 graded chunks are sent to the answer model. Fewer, verified passages leave the model less to drift on
+Only the ≤ 6 graded chunks (plus ≤ 6 chunks stating a step of the asked chain) are sent to the answer model. Fewer, verified passages leave the model less to drift on
 and make every citation number meaningful.
 
 ---
@@ -304,7 +310,7 @@ revised, and only then sent. Users never see a draft that is later corrected.
 
 ### C3. Claim decomposition with a stronger model
 
-- The checker (`gpt-4o`, stronger than the `gpt-4o-mini` answer model) splits the answer into **atomic,
+- The checker (`gpt-4o`, a different model than the `gpt-4.1` answer model) splits the answer into **atomic,
   self-contained claims**:
   - every "weil" / "because" is its own claim;
   - "…, wobei …", "… und …", "…, während …" become two claims;
@@ -514,7 +520,8 @@ domains, and kept only if the grader confirms the summary answers them.
 
 ## 12. How to verify it finds the real data
 
-There is no automated evaluation set yet (see §14). Until then, test manually with these question types:
+[`data/eval_chains.py`](../data/eval_chains.py) measures chain answers automatically (35 LLM-judged questions, see
+the README). In addition, test manually with these question types:
 
 | Test type | Example intent | Expected behavior |
 |-----------|---------------|-------------------|
@@ -578,7 +585,7 @@ These are the open gaps in getting to the real data, listed so contributors know
 |-----|--------|-------------------|
 | **No query rewriting from chat history** | "Und warum?" is retrieved without context | Condense history + question into a standalone query before `_fusion_candidates` |
 | **No multi-query / decomposition** | A compound question uses one retrieval pass | `query_transformations.py`: sub-questions, retrieval per part, merge |
-| **No automated evaluation set** | Valve changes are judged by hand | A golden set of question → expected chunk ids; measure recall@k, grading precision and claim-rejection rate |
+| **Evaluation is LLM-judged only** | `eval_chains.py` scores chain answers by an LLM, with run-to-run noise | A golden set of question → expected chunk ids; measure recall@k, grading precision and claim-rejection rate |
 | **No cross-encoder reranker** | Grading costs one LLM call per candidate | A local cross-encoder before the LLM gate to cut candidates |
 | **No date metadata on videos** | Opinions are attributed but not ordered by date | Add a publish date to sources and show the newest view first |
 | **Lexical grounding only** | Correct paraphrases across sentences may be rejected | An NLI entailment model as a second opinion (keeping the quote check) |
