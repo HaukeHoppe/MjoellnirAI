@@ -11,7 +11,8 @@ Builds the public knowledge base for the Capital Markets RAG pipeline from sourc
    (trigger, numbered steps, conditions, counter-effects), one relation per step. These carry the
    multi-step links that encyclopedia articles rarely state.
 4. Concept normalization: every concept name (chunk concepts and relation ends) is mapped to one canonical
-   English name, so the concept graph connects chunks from different sources and chains can be followed
+   English name, and rarely used relation ends are linked to a core concept that means the same or is its
+   general form, so the concept graph connects chunks from different sources and chains can be followed
    across them.
 
 Unchanged chunks are taken over from the previous build, so a rebuild only pays for new material.
@@ -569,6 +570,15 @@ class SynonymGroups(BaseModel):
     canonical: List[str] = Field(..., description="One canonical name per group, same order as groups")
 
 
+class AnchorChoice(BaseModel):
+    item: int = Field(..., description="Number of the concept in the list")
+    choice: int = Field(..., description="Number of the fitting candidate, 0 if none fits")
+
+
+class AnchorChoices(BaseModel):
+    choices: List[AnchorChoice] = Field(..., description="One choice per listed concept")
+
+
 CANON_PROMPT = """Map each capital-markets concept name below to a short canonical English name in Title Case:
 singular unless the plural is the usual term ("Interest Rates", "Stock Prices"), no articles, no explanations.
 Keep the meaning exactly: a change is part of the name only if the input names one ("Zinserhöhung" ->
@@ -585,6 +595,21 @@ name per group, preferably one of its members.
 
 {names}"""
 
+ANCHOR_PROMPT = """Each numbered capital-markets concept below is used only rarely. It comes with numbered candidate
+core concepts that are used often. For each concept, pick the candidate that names the same economic quantity,
+actor, instrument or event, or its general form when the concept is only a specific case of it (a region,
+market, period, example or wording of it). Examples:
+- "Anstieg des Ölpreises" -> "Oil Price Increase"
+- "Stock Market Crash US Canada" -> "Stock Market Crash"
+- "US Technology Stocks" -> "Technology Stocks"
+- "Arbeitslosigkeit USA" -> "Unemployment"
+Keep a change as a change and a level as a level: "Oil Price Increase" may not become "Oil Price", "Oil Price"
+may not become "Oil Price Increase". Never pick an opposite or another direction ("Interest Rate Cut" is not
+"Interest Rate Hike"), a different quantity, a cause or an effect of the concept, or only a part of it.
+If no candidate fits, choose 0. Answer for every concept.
+
+{items}"""
+
 
 def relation_key(chunk_id, rel: dict) -> str:
     # Same as relation_hash() in ingest_capital_chunks.py, for re-keying its cache.
@@ -592,32 +617,123 @@ def relation_key(chunk_id, rel: dict) -> str:
     return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
 
-def stage_normalize(model: str, similarity: float):
-    path = f"{OUT_DIR}/extracted_v2_all.json"
+def graph_stats(chunks: List[dict]) -> str:
+    # How well relations connect: relation ends used only once link nothing, and the chain search can
+    # only follow paths inside one connected component.
+    ends = Counter(r[k] for c in chunks for r in c["relations"] for k in ("source", "target"))
+    neighbors = {}
+    for c in chunks:
+        for r in c["relations"]:
+            neighbors.setdefault(r["source"], set()).add(r["target"])
+            neighbors.setdefault(r["target"], set()).add(r["source"])
+    seen, largest = set(), 0
+    for start in neighbors:
+        if start in seen:
+            continue
+        stack, size = [start], 0
+        seen.add(start)
+        while stack:
+            size += 1
+            for other in neighbors[stack.pop()]:
+                if other not in seen:
+                    seen.add(other)
+                    stack.append(other)
+        largest = max(largest, size)
+    once = sum(n == 1 for n in ends.values())
+    return (f"{len(ends)} relation ends, {once} used only once, "
+            f"largest connected part {largest} ({largest / max(len(ends), 1):.0%})")
+
+
+def embed_names(names: List[str]) -> np.ndarray:
+    vectors = np.array(OpenAIEmbeddings(model="text-embedding-3-large", timeout=120).embed_documents(names))
+    return vectors / np.linalg.norm(vectors, axis=1, keepdims=True)
+
+
+def canonical_names(llm, todo: List[str], mapping: dict) -> int:
+    # Name -> canonical English name. Only successful batches are cached; a failed batch keeps its names for
+    # the next run instead of caching them unchanged (which left German names in the graph).
+    batches = [todo[i:i + 40] for i in range(0, len(todo), 40)]
+    results = run_batch(llm.with_structured_output(Canonical),
+                        [CANON_PROMPT.format(n=len(b), names="\n".join(b)) for b in batches])
+    failed = 0
+    for batch, result in zip(batches, results):
+        if isinstance(result, Exception) or len(result.names) != len(batch):
+            failed += len(batch)
+            continue
+        mapping.update(zip(batch, (n.strip() or old for n, old in zip(result.names, batch))))
+    return failed
+
+
+def anchor_names(llm, chunks: List[dict], final: dict, anchors_path: str, min_uses: int,
+                 min_similarity: float) -> dict:
+    # Rare relation ends -> a core concept (an end used at least min_uses times, or an end of a chain text) that
+    # means the same or is its general form, as confirmed by the LLM. Links the long tail of one-off names
+    # ("Anstieg des Ölpreises") to the concepts the chains run through ("Oil Price Increase").
+    # concept_anchors.json caches name -> core concept ("" = none fits) across builds.
+    cache = json.load(open(anchors_path, encoding="utf-8")) if os.path.exists(anchors_path) else {}
+    uses = Counter(final[r[k]] for c in chunks for r in c["relations"] for k in ("source", "target"))
+    core = {n for n, k in uses.items() if k >= min_uses}
+    core |= {final[r[k]] for c in chunks if any("Wirkungskette" in s for s in c["sources"])
+             for r in c["relations"] for k in ("source", "target")}
+    core = sorted(core)
+    rare = sorted(n for n in uses if n not in core)
+    todo = [n for n in rare if n not in cache]
+    print(f"Anchoring: {len(rare)} rare relation ends ({len(todo)} new), {len(core)} core concepts ...")
+    if todo:
+        core_vectors = embed_names(core)
+        similar = embed_names(todo) @ core_vectors.T
+        items = []
+        for name, row in zip(todo, similar):
+            best = [i for i in np.argsort(row)[::-1][:8] if row[i] >= min_similarity]
+            if best:
+                items.append((name, [core[i] for i in best]))
+            else:
+                cache[name] = ""
+        batches = [items[i:i + 20] for i in range(0, len(items), 20)]
+        prompts = [
+            ANCHOR_PROMPT.format(items="\n\n".join(
+                f"{n}. {name}\n" + "\n".join(f"   {j}) {cand}" for j, cand in enumerate(cands, start=1))
+                for n, (name, cands) in enumerate(batch, start=1)
+            ))
+            for batch in batches
+        ]
+        results = run_batch(llm.with_structured_output(AnchorChoices), prompts)
+        for batch, result in zip(batches, results):
+            if isinstance(result, Exception):
+                continue
+            for choice in result.choices:
+                if 1 <= choice.item <= len(batch):
+                    name, cands = batch[choice.item - 1]
+                    cache[name] = cands[choice.choice - 1] if 1 <= choice.choice <= len(cands) else ""
+        json.dump(cache, open(anchors_path, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
+    return {n: cache[n] for n in rare if cache.get(n)}
+
+
+def stage_normalize(model: str, similarity: float, out_dir: str, retranslate: bool, anchor_min_uses: int,
+                    anchor_similarity: float):
+    path = f"{out_dir}/extracted_v2_all.json"
     chunks = json.load(open(path, encoding="utf-8"))
+    print(f"Before: {graph_stats(chunks)}")
     names = sorted({n for c in chunks for n in c["concepts"]}
                    | {r[k] for c in chunks for r in c["relations"] for k in ("source", "target")})
     # concept_map.json caches name -> canonical name across builds.
-    map_path = f"{OUT_DIR}/concept_map.json"
+    map_path = f"{out_dir}/concept_map.json"
     mapping = json.load(open(map_path, encoding="utf-8")) if os.path.exists(map_path) else {}
     llm = ChatOpenAI(model=model, temperature=0, max_retries=10, timeout=120)
 
-    # 1. Every name -> canonical English name (translates German names, unifies spelling).
-    todo = [n for n in names if n not in mapping]
-    print(f"Canonical names: {len(names)} names ({len(todo)} new) ...")
-    batches = [todo[i:i + 80] for i in range(0, len(todo), 80)]
-    results = run_batch(llm.with_structured_output(Canonical),
-                        [CANON_PROMPT.format(n=len(b), names="\n".join(b)) for b in batches])
-    for batch, result in zip(batches, results):
-        ok = not isinstance(result, Exception) and len(result.names) == len(batch)
-        mapping.update(dict(zip(batch, (n.strip() for n in result.names))) if ok else {n: n for n in batch})
+    # 1. Every name -> canonical English name (translates German names, unifies spelling). --retranslate sends
+    # names cached as their own canonical name again (repairs names a failed batch left untranslated).
+    todo = [n for n in names if n not in mapping or (retranslate and mapping[n] == n)]
+    print(f"Canonical names: {len(names)} names ({len(todo)} to map) ...")
+    failed = canonical_names(llm, todo, mapping)
+    if failed:
+        print(f"  {failed} names not mapped (failed batches), kept unchanged for this run")
+    canonical = {n: mapping.get(n, n) for n in names}
 
     # 2. Near-duplicate canonical names (embedding clusters) are merged where the LLM confirms synonyms.
-    canon = sorted({mapping[n] for n in names})
-    vectors = np.array(OpenAIEmbeddings(model="text-embedding-3-large", timeout=120).embed_documents(canon))
-    vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+    canon = sorted(set(canonical.values()))
     labels = AgglomerativeClustering(n_clusters=None, metric="cosine", linkage="average",
-                                     distance_threshold=1 - similarity).fit_predict(vectors)
+                                     distance_threshold=1 - similarity).fit_predict(embed_names(canon))
     clusters = [c for c in ([canon[i] for i in np.where(labels == k)[0]] for k in set(labels)) if len(c) > 1]
     print(f"Merging: {len(canon)} canonical names, {len(clusters)} candidate clusters ...")
     merge = {}
@@ -630,11 +746,18 @@ def stage_normalize(model: str, similarity: float):
             for member in group:
                 if member in cluster and len(group) > 1:
                     merge[member] = name.strip()
-    final = {n: merge.get(mapping[n], mapping[n]) for n in names}
+    final = {n: merge.get(canonical[n], canonical[n]) for n in names}
 
-    # 3. Apply to the chunks. Re-key the relation cache of ingest_capital_chunks.py, so relations whose
+    # 3. Rare relation ends -> core concepts.
+    if anchor_min_uses:
+        anchored = anchor_names(llm, chunks, final, f"{out_dir}/concept_anchors.json", anchor_min_uses,
+                                anchor_similarity)
+        final = {n: anchored.get(f, f) for n, f in final.items()}
+        print(f"  {len(anchored)} rare relation ends linked to a core concept")
+
+    # 4. Apply to the chunks. Re-key the relation cache of ingest_capital_chunks.py, so relations whose
     # only change is a renamed end are not classified again.
-    cache_path = f"{OUT_DIR}/relation_classes.json"
+    cache_path = f"{out_dir}/relation_classes.json"
     cache = json.load(open(cache_path, encoding="utf-8")) if os.path.exists(cache_path) else {}
     rekeyed = 0
     for c in chunks:
@@ -651,6 +774,7 @@ def stage_normalize(model: str, similarity: float):
     if cache:
         json.dump(cache, open(cache_path, "w", encoding="utf-8"), ensure_ascii=False)
     print(f"{len(names)} names -> {len(set(final.values()))} concepts, {rekeyed} cached relation classes re-keyed")
+    print(f"After: {graph_stats(chunks)}")
 
 
 LIZENZ_TEMPLATE = """<!doctype html>
@@ -719,10 +843,19 @@ if __name__ == "__main__":
     parser.add_argument("--chain_model", default="gpt-4.1")
     # Cosine similarity above which canonical concept names become merge candidates.
     parser.add_argument("--similarity", type=float, default=0.85)
+    # normalize: directory to work in (a copy of the index directory, to test a new normalization first).
+    parser.add_argument("--out_dir", default=OUT_DIR)
+    # normalize: map names cached as their own canonical name again (repairs untranslated German names).
+    parser.add_argument("--retranslate", action="store_true")
+    # normalize: relation ends used fewer times are linked to a core concept (0 = off), and the cosine
+    # similarity a core concept needs to be offered as a candidate.
+    parser.add_argument("--anchor_min_uses", type=int, default=3)
+    parser.add_argument("--anchor_similarity", type=float, default=0.55)
     args = parser.parse_args()
     if args.stage == "fetch":
         stage_fetch()
     elif args.stage == "build":
         stage_build(args.model, args.chain_model)
     else:
-        stage_normalize(args.model, args.similarity)
+        stage_normalize(args.model, args.similarity, args.out_dir, args.retranslate, args.anchor_min_uses,
+                        args.anchor_similarity)
