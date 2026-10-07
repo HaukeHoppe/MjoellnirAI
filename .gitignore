@@ -5,6 +5,14 @@
 *.key
 .webui_secret_key
 
+# ---- Local only: not part of the repository ------------------------------
+# Assistant instructions and hooks, the change log, third-party reference scripts and the climate test PDF.
+CLAUDE.md
+.claude/
+CHANGELOG.md
+all_rag_techniques_runnable_scripts/
+pdfs/Understanding_Climate_Change.pdf
+
 # ---- Open WebUI runtime data (database, uploads, vector DB, model cache) --
 open-webui-data/
 

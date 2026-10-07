@@ -10,7 +10,7 @@ For the design rationale behind each step, see [`CAPITAL_RAG_BEST_PRACTICES.md`]
 | [`pipelines-capital/capital_rag_pipeline.py`](../pipelines-capital/capital_rag_pipeline.py) | Query-time pipeline served to Open WebUI |
 | [`pdfs/generate_start_suggestions.py`](../pdfs/generate_start_suggestions.py) | Builds verified start-page questions |
 | [`pdfs/apply_start_suggestions.py`](../pdfs/apply_start_suggestions.py) | Writes those questions onto the model in Open WebUI |
-| [`all_rag_techniques_runnable_scripts/`](../all_rag_techniques_runnable_scripts/) | Reference implementations the pipeline is adapted from |
+| `all_rag_techniques_runnable_scripts/` | Reference implementations the pipeline is adapted from (third-party code, not in the repository) |
 
 ---
 
