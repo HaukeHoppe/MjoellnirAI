@@ -374,10 +374,9 @@ When an answer is missing, find which stage is responsible:
 | [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py) | Builds the public knowledge base (Wikipedia + own texts) and the licence page |
 | `pdfs/faiss_public_index/`, `pdfs/faiss_capital_index/` | Generated indexes and caches (git-ignored) |
 | [`legal/`](legal/) | Impressum, Datenschutzerklärung, Lizenzen (served by Caddy) |
-| [`all_rag_techniques_runnable_scripts/`](all_rag_techniques_runnable_scripts/) | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …) |
+| `all_rag_techniques_runnable_scripts/` | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …); third-party code, kept locally, not in the repository |
 | [`docs/`](docs/) | Detailed documentation |
 | [`docker-compose.yaml`](docker-compose.yaml), `Dockerfile.*`, [`requirements.txt`](requirements.txt) | Container setup |
-| [`CHANGELOG.md`](CHANGELOG.md) | Change history |
 
 ---
 
