@@ -111,7 +111,7 @@ engine = box(51, 120.5, 23.5, 13.5, "pipelines-capital  (RAG engine)",
              tech="image pipelines (pinned digest)\nport 9099 (internal) · env OPENAI_API_KEY", size=9.4)
 v_data = box(22.5, 108, 15.5, 8.5, "open-webui-data/", "DB, uploads, settings", VOLUME,
              tech="→ /app/backend/data", size=9, dashed=True)
-v_pdfs = box(40, 108, 17.5, 8.5, "pdfs/", "index files + scripts", VOLUME,
+v_data = box(40, 108, 17.5, 8.5, "data/", "index files + scripts", VOLUME,
              tech="→ /data  (both)", size=9, dashed=True)
 v_code = box(59.5, 108, 16.5, 8.5, "pipelines-capital/", "pipeline code + valves", VOLUME,
              tech="→ /app/pipelines", size=9, dashed=True)
@@ -156,7 +156,7 @@ k_graph = box(xs[4], RY, W5, RH, "Knowledge graph",
 for a, b in zip([k_src, k_cls, k_vec, k_sum], [k_cls, k_vec, k_sum, k_graph]):
     arrow(mid(a, "r"), mid(b, "l"))
 
-frame(2, 60, 96, 16, "Knowledge base   (files in pdfs/faiss_capital_index/, loaded into the RAG engine at startup)",
+frame(2, 60, 96, 16, "Knowledge base   (files in data/faiss_capital_index/, loaded into the RAG engine at startup)",
       color=STORE[1], dashed=True, fill="#f7fee7", label_bottom=True)
 SW, SY, SH = 21, 63.6, 10.2
 s_sem = box(4, SY, SW, SH, "Vector index", "finds passages by meaning", STORE, tech="FAISS · cosine similarity", size=9.3)

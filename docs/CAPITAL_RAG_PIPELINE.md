@@ -6,10 +6,10 @@ For the design rationale behind each step, see [`CAPITAL_RAG_BEST_PRACTICES.md`]
 
 | File | Role |
 |------|------|
-| [`pdfs/ingest_capital_chunks.py`](../pdfs/ingest_capital_chunks.py) | Offline ingestion: classification, embedding, summaries, concept graph |
+| [`data/ingest_capital_chunks.py`](../data/ingest_capital_chunks.py) | Offline ingestion: classification, embedding, summaries, concept graph |
 | [`pipelines-capital/capital_rag_pipeline.py`](../pipelines-capital/capital_rag_pipeline.py) | Query-time pipeline served to Open WebUI |
-| [`pdfs/generate_start_suggestions.py`](../pdfs/generate_start_suggestions.py) | Builds verified start-page questions |
-| [`pdfs/apply_start_suggestions.py`](../pdfs/apply_start_suggestions.py) | Writes those questions onto the model in Open WebUI |
+| [`data/generate_start_suggestions.py`](../data/generate_start_suggestions.py) | Builds verified start-page questions |
+| [`data/apply_start_suggestions.py`](../data/apply_start_suggestions.py) | Writes those questions onto the model in Open WebUI |
 | `all_rag_techniques_runnable_scripts/` | Reference implementations the pipeline is adapted from (third-party code, not in the repository) |
 
 ---
@@ -60,7 +60,7 @@ flowchart LR
     B[Browser<br/>localhost:3000] -->|HTTP| OW[open-webui<br/>container :8080]
     OW -->|OpenAI-compatible<br/>chat request| PC[pipelines-capital<br/>container :9099<br/>not published]
     PC -->|embeddings, chat,<br/>structured output| OA[(OpenAI API)]
-    PC ---|bind mount /data| IDX[(pdfs/faiss_capital_index/<br/>index.faiss, index.pkl,<br/>graph.json, summaries.json, ...)]
+    PC ---|bind mount /data| IDX[(data/faiss_capital_index/<br/>index.faiss, index.pkl,<br/>graph.json, summaries.json, ...)]
     PC ---|bind mount /app/pipelines| PY[pipelines-capital/<br/>capital_rag_pipeline.py]
     OW ---|bind mount /data| IDX
 ```
@@ -91,7 +91,7 @@ flowchart LR
 
 ## 3. Source data: `extracted_v2_all.json`
 
-Ingestion starts from `pdfs/faiss_capital_index/extracted_v2_all.json`. This file is the source of truth.
+Ingestion starts from `data/faiss_capital_index/extracted_v2_all.json`. This file is the source of truth.
 It is created **outside this repository** (transcript chunking and extraction) and is git-ignored together
 with the rest of the index directory. Each element is one chunk:
 
@@ -205,7 +205,7 @@ not saved in `index.pkl`, so the pipeline passes them again when it loads the in
 
 The graph is built from original chunks only. Summaries carry no relations.
 
-### Output files (all in `pdfs/faiss_capital_index/`, all git-ignored)
+### Output files (all in `data/faiss_capital_index/`, all git-ignored)
 
 | File | Produced by | Read by |
 |------|-------------|---------|
@@ -572,7 +572,7 @@ Ingestion flags: `--index_dir`, `--chunks`, `--embedding_model`, `--llm_model`, 
 # first setup
 cp .env.example .env                       # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
-# put extracted_v2_all.json into pdfs/faiss_capital_index/
+# put extracted_v2_all.json into data/faiss_capital_index/
 docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py
 docker restart open-webui-pipelines-capital
 # add connection http://pipelines-capital:9099 in Open WebUI (see §2)
