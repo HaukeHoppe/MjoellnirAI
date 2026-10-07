@@ -2,9 +2,9 @@
 title: Capital Markets RAG
 author: Mjoelnir AI
 date: 2026-09-25
-version: 0.3
+version: 0.4
 license: MIT
-description: RAG over the capital-markets chunks in faiss_capital_index (built from extracted_v2_all.json by ingest_capital_chunks.py). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their video, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
+description: RAG over the capital-markets chunks in faiss_public_index (Wikipedia articles and own explanatory texts, built by build_public_kb.py and ingest_capital_chunks.py; INDEX_DIR can point to another index such as faiss_capital_index). Query flow - fusion retrieval (HyPE dense vectors + BM25, adapted from fusion_retrieval.py), concept-graph expansion (graph.json), causal chain search (cause -> effect paths of up to 4 steps through the directed concept graph, with the chunks stating each step), LLM reranking + relevance/grounding grading per chunk (reranking.py / reliable_rag), generation that keeps time-bound opinions attributed to their source, a post-answer grounding check, and a source list that explains why each source was used (explainable_retrieval.py). Explorer mode: without a grounded answer, related covered topics are suggested as verified follow-up questions. Runs in its own pipelines container (pipelines-capital) next to the climate test pipeline.
 requirements: langchain-community,langchain-openai,langchain-core,faiss-cpu,openai,pydantic,rank-bm25,numpy
 """
 
@@ -27,6 +27,10 @@ class Grade(BaseModel):
     relevance: int = Field(..., ge=0, le=10, description="Relevance to the question, 0-10.")
     supports_answer: bool = Field(
         ..., description="True only if the document directly helps answer the question."
+    )
+    states_step: bool = Field(
+        ...,
+        description="True if the document states at least one cause -> effect link of the chain the question asks about, even if it does not answer the whole question.",
     )
     reason: str = Field(
         ..., description="One short sentence, in the language of the question, why."
@@ -64,6 +68,17 @@ class AnswerCheck(BaseModel):
     claims: List[Claim] = Field(default_factory=list)
 
 
+class Corroboration(BaseModel):
+    line: int = Field(..., description="Number of the answer line (L<n>) the fact is stated in.")
+    block: int = Field(..., description="Number of a further block that states the same.")
+    quote: str = Field(..., description="Verbatim sentence from that block stating it.")
+    same_statement: bool = Field(..., description="True if the quote states the same cause, effect and certainty.")
+
+
+class Corroborations(BaseModel):
+    items: List[Corroboration] = Field(default_factory=list)
+
+
 class Suggestion(BaseModel):
     topic: int = Field(..., description="Number of the topic in the list.")
     label: str = Field(..., description="Short topic name in the language of the user's question.")
@@ -77,11 +92,25 @@ class Suggestions(BaseModel):
     suggestions: List[Suggestion] = Field(default_factory=list)
 
 
+class QueryConcepts(BaseModel):
+    causes: List[str] = Field(default_factory=list, description="Triggers / causes named in the question")
+    effects: List[str] = Field(default_factory=list, description="Effects the question asks about; empty if none")
+
+
+QUERY_CONCEPTS_PROMPT = """Name the cause -> effect concepts in this capital-markets question as short English
+Title Case names of economic quantities, actors or events (e.g. "Stock Market Crash", "Gold Price",
+"Interest Rates", "Bank Lending"). causes: the trigger(s) the question starts from. effects: what the question
+asks the consequences for; leave empty if it asks for consequences in general.
+
+Question: {question}"""
+
+
 GRADE_PROMPT = """Rate how well the document helps answer the question.
 Consider the specific intent of the question, not just keyword or topic overlap.
 
 relevance: 0-10.
 supports_answer: true only if the document contains information that directly helps answer the question.
+states_step: true if the document states at least one cause -> effect link that belongs to the chain the question asks about - the trigger, an intermediate step or the final effect (e.g. for "How can a rate decision in Japan hit US tech stocks?": a document stating that Japan's low rates lead to borrowing in yen, or that rising rates lower stock valuations). It does not need to answer the whole question. False for documents that only share the topic or keywords without stating such a link.
 reason: one short sentence in the language of the question.
 
 Question: {question}
@@ -97,12 +126,23 @@ Do NOT use your own knowledge - not even for well-known textbook facts or to exp
 Stay faithful to the wording of the sources:
 - Keep their degree of certainty: "könnte" / "kann" stays a possibility, never "typischerweise" or "immer".
 - Only state a cause -> effect link that the context states as such. Do not join two separate statements into a new cause -> effect link.
+- You may build a chain of several steps when every single step is stated in the context: A -> B in one block, B -> C in another. Write each step as its own sentence with its own citation. Never state the final effect as a direct result of the trigger (A -> C) unless the context states that link itself.
 
-The context blocks are from videos by one capital-markets creator and come in two kinds:
+Mechanism questions (why / how / what happens if) are answered as a chain, as long as the context supports it:
+**<Short heading naming the mechanism>**
+1. **<Step>**: cause -> effect and how it works [n]
+2. **<Step>**: ... (as many steps as the context supports, in causal order)
+**Bedingungen und Gegeneffekte**: when the chain holds or breaks, and what works against it, as stated in the context.
+No introduction or summary sentence that links the trigger directly to the final effect - the steps make that link.
+Phrase each step close to the wording of its block and give only the reason the block gives; do not add reasons, actors or effects of your own.
+The context may start with "Causal paths": chains of relations found across the sources, each step with the blocks that state it. Use them to find and order the steps; every step still needs its block citation. Other questions are answered in normal prose.
+Build the chain from all blocks, not only from the block that covers the most: cite every block that states a step (e.g. [1][3]), and take a step from another block when it is stated there but missing in the block that covers the most.
+
+The context blocks come from the indexed capital-markets sources (each block label names its source) and come in two kinds:
 - CONCEPT blocks are timeless explanations. You may state them as general explanations.
-- OPINION blocks are time-bound views, forecasts or positioning as stated in the named video. Always attribute them to that video in the same paragraph, using the video title exactly as written in the block label without the [id] and #n (e.g. "Im Video Exklusiver Marktausblick_ Mai 2026 schätzte er ... ein"). Never present them as current facts or as a current recommendation.
-- Exception: a "Relation [TIMELESS]" line is a general mechanism, even inside an OPINION block. You may state it as a general explanation. Everything else in an OPINION block, including "Relation [TIME-BOUND]" lines, must be attributed to its video.
-- If opinion blocks from different videos disagree, show each view with its video and say that they differ. Do not merge them into one view, and do not end with a summary or conclusion that combines views from different videos.
+- OPINION blocks are time-bound views, forecasts or positioning as stated in the named source. Always attribute them to that source in the same paragraph, using the source title exactly as written in the block label without the [id] and #n (e.g. "Laut Marktkommentar Mai 2026 ..."). Never present them as current facts or as a current recommendation.
+- Exception: a "Relation [TIMELESS]" line is a general mechanism, even inside an OPINION block. You may state it as a general explanation. Everything else in an OPINION block, including "Relation [TIME-BOUND]" lines, must be attributed to its source.
+- If opinion blocks from different sources disagree, show each view with its source and say that they differ. Do not merge them into one view, and do not end with a summary or conclusion that combines views from different sources.
 
 Answer in the language of the question.
 
@@ -117,15 +157,15 @@ Split the answer into individual claims. Every reason or explanation ("weil ..."
 Write every claim self-contained: replace "dadurch", "dies", "was", "somit", "this" etc. with what they refer to, so each claim names its own cause (e.g. "Sinkende Zinsen steigern die Nachfrage nach Anleihen", not "Die Nachfrage steigt dadurch").
 
 For each claim:
-- kind: "meta" if it only says what the sources do or do not cover, or only compares / contrasts claims from the context (e.g. "the two videos recommend different positions") without adding any information of its own. Everything else is "fact". A meta statement that adds any new information is a "fact".
-- quote (facts only): copy, character for character, ONE sentence from the context that states the claim. Never join several sentences. Only exception: if that sentence starts with a pronoun referring to the sentence directly before it ("Sie", "Er", "Es", "Dies", "Diese", "It", "This", ...), copy both consecutive sentences. If no single sentence states it, the claim is unsupported and quote stays empty. For meta claims leave it empty.
+- kind: "meta" if it only says what the sources do or do not cover, or only compares / contrasts claims from the context (e.g. "the two sources recommend different positions") without adding any information of its own. Everything else is "fact". A meta statement that adds any new information is a "fact".
+- quote (facts only): copy, character for character, ONE sentence from the context that states the claim. Never join sentences from different places. Only exception: if the statement continues in the directly following sentence(s) of the same passage, which refer back with a pronoun ("Sie", "Er", "Dies", "Diese", "It", "This", ...) or a connector ("deshalb", "dadurch", "daher", "somit", "therefore", ...), copy up to three consecutive sentences. If no single sentence states it, the claim is unsupported and quote stays empty. For meta claims leave it empty.
 - supported: for a fact, true only if the quote states the claim - general knowledge does NOT count, even if the claim is true. For a meta claim, true if it accurately describes the context.
 
 The quote must state the claim itself: same cause, same effect, same degree of certainty. A fact is unsupported if it:
 - turns a possibility ("könnte", "kann", "may") into a rule ("typischerweise", "immer", "typically");
 - links a cause and an effect that the context mentions only separately, or links the effect to a different cause. If the quote names a different cause than the claim (claim: falling rates raise demand; quote: investor confidence raises demand), the claim is unsupported;
-- attributes a view to the wrong video.
-A statement that merges different views from different videos into one is unsupported (fact or meta).
+- attributes a view to the wrong source.
+A statement that merges different views from different sources into one is unsupported (fact or meta).
 
 claim_cause / quote_cause / same_cause: for every claim that states a cause -> effect, write down the cause the claim names and the cause the quote gives for the same effect, then set same_cause. Example: claim "Sinkende Zinsen steigern die Nachfrage nach Anleihen", quote "Wenn Investoren Vertrauen zurückgewinnen, ... steigt die Nachfrage" -> claim_cause "sinkende Zinsen", quote_cause "Vertrauen der Investoren", same_cause false.
 answer_sentence: the sentence of the answer the claim was taken from, copied verbatim (before you rewrote the claim).
@@ -136,9 +176,26 @@ Context:
 Answer:
 {answer}"""
 
+CORROBORATE_PROMPT = """Below is a checked answer with citations [n], split into numbered lines (L1, L2, ...), and the context blocks it was written from.
+For every line of the answer that states a fact, look for OTHER blocks (not already cited in that line) that state the same fact themselves.
+
+For each such block:
+- line: the number of the answer line.
+- block: the number of the further block.
+- quote: copy, character for character, ONE sentence from that block that states the fact.
+- same_statement: true only if the quote states the same cause, the same effect and the same degree of certainty as a statement in that line. A block that only shares the topic, names a different cause or states a different effect does not count.
+
+Return only blocks that really state the fact. Returning nothing is fine.
+
+Context:
+{context}
+
+Answer:
+{answer}"""
+
 REVISE_PROMPT = """Rewrite the answer to fix the problems listed below.
 - "not stated in the sources": remove the statement. Do not replace it with a sentence that repeats or denies it ("Die Quellen erklären nicht, dass ...") - that is a new claim about the sources and often wrong. Only if the removal leaves part of the question unanswered, you may add one general note such as "Zu <Aspekt der Frage> sagen die Quellen nichts."
-- "missing video attribution": keep the statement but name the given video title in the same paragraph (e.g. "Im Video <title> ...").
+- "missing source attribution": keep the statement but name the given source title in the same paragraph (e.g. "Laut <title> ...").
 - "merges separate statements": keep the content but write each source statement as its own sentence with its citation; do not connect them with "wobei", "da", "weil" etc.
 Do not add any new information. Keep the citations [1], [2], ... of the remaining statements. Answer in the language of the question.
 Return only the rewritten answer text, without a heading or label such as "Answer:".
@@ -155,7 +212,7 @@ Problems:
 {unsupported}"""
 
 EXPLORE_PROMPT = """{situation}
-Below are topics that ARE covered in the indexed videos of a capital-markets creator, each with an excerpt from the videos.
+Below are topics that ARE covered in the indexed capital-markets sources, each with an excerpt from the sources.
 
 Pick up to {n} topics {goal}.
 For each picked topic:
@@ -170,11 +227,11 @@ Topics:
 {topics}"""
 
 EXPLORE_NO_ANSWER = (
-    "The user asked a question that the videos do not answer.",
+    "The user asked a question that the sources do not answer.",
     "that are most closely related to what the user wanted to know, so they can explore nearby material instead",
 )
 EXPLORE_ANSWERED = (
-    "The user asked a question and already got an answer from the videos.",
+    "The user asked a question and already got an answer from the sources.",
     "the user would most likely want to explore next to deepen or broaden that answer. Do not pick topics that only repeat the question",
 )
 
@@ -189,14 +246,16 @@ FOLLOW_UP_TASK = re.compile(r"^### Task:\s*Suggest .*follow-up questions", re.IG
 
 
 def normalize(text: str) -> str:
-    text = re.sub(r"[\"'„“”‚‘’«»]", "", text.lower())
+    # Parentheticals ("(Trading Halts)") are dropped: quotes often leave them out.
+    text = re.sub(r"\s*\([^)]*\)", "", text.lower())
+    text = re.sub(r"[\"'„“”‚‘’«»]", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
-# A sentence starting with one of these continues the subject of the previous
-# sentence ("Volatilität ... beschreibt das Risiko. Sie wird durch die
-# Standardabweichung gemessen."). Causal connectors ("dadurch", "deshalb") are
-# deliberately not included.
+# A sentence continues the previous one if it refers back to it early on: with a
+# pronoun ("Volatilität ... beschreibt das Risiko. Sie wird ... gemessen.") or a
+# causal connector ("Der Wert der Sicherheiten sinkt. Broker fordern deshalb
+# Nachschüsse."). Then the source itself states the link between the sentences.
 ANAPHORS = set(
     """
     sie er es dies diese dieser dieses diesen diesem ihr ihre ihren ihrem ihrer
@@ -204,20 +263,44 @@ ANAPHORS = set(
     it its they their these this
     """.split()
 )
+CONNECTORS = set(
+    """
+    deshalb dadurch daher darum deswegen somit folglich infolgedessen dementsprechend
+    therefore thus hence consequently
+    """.split()
+)
+
+
+def continues(sentence: str) -> bool:
+    words = re.findall(r"\w+", sentence)
+    return bool(words) and (words[0] in ANAPHORS or any(w in CONNECTORS for w in words[:8]))
+
+
+# A numbered step of a chain text ("2. Euro-Abwertung → Importpreise: ..."): one line stating one
+# cause -> effect, so its sentences belong together even without a connector.
+CHAIN_STEP = re.compile(r"^\s*\d+\.\s")
+
+
+def in_chain_step(quote: str, context: str) -> bool:
+    return any(CHAIN_STEP.match(line) and quote in normalize(line) for line in context.splitlines())
 
 
 def quote_in_context(quote: str, context: str) -> bool:
     # The checker's quote must really appear in the context, so the check cannot
     # be passed with an invented quote. Minor copy differences are tolerated.
-    # Only single-sentence quotes count: joining two sentences is how a cause from
-    # one sentence gets attached to an effect from another. Exception: two
-    # consecutive sentences where the second refers back with a pronoun, since
-    # it only names its subject through the first one.
+    # A quote is one sentence, up to three consecutive sentences of the same
+    # passage where each further sentence refers back to the previous one
+    # (continues()), or up to four consecutive sentences within one numbered
+    # chain step. Anything else would let a cause from one sentence be attached
+    # to an effect from an unrelated one.
+    raw_context = context
     quote, context = normalize(quote), normalize(context)
     sentences = re.split(r"(?<=[.!?])\s+", quote)
-    if len(quote) < 15 or len(sentences) > 2:
+    if len(quote) < 15 or len(sentences) > 4:
         return False
-    if len(sentences) == 2 and sentences[1].split(" ", 1)[0] not in ANAPHORS:
+    if not all(continues(s) for s in sentences[1:]):
+        return len(sentences) > 1 and in_chain_step(quote, raw_context)
+    if len(sentences) > 3:
         return False
     if quote in context:
         return True
@@ -245,8 +328,8 @@ def video_key(text: str) -> str:
 
 
 def parse_video(source: str) -> tuple:
-    # "Live-Replay [948589646] (de-x-autogen) #1" -> ("Live-Replay", "948589646")
-    # "Grundlagen-Webinar Tradingview(1)_transcript #3" -> ("Grundlagen-Webinar Tradingview(1)", "")
+    # "Marktgespräch [123456789] (de-x-autogen) #1" -> ("Marktgespräch", "123456789")
+    # "Marktkommentar Mai 2026_transcript #3" -> ("Marktkommentar Mai 2026", "")
     match = re.match(r"^(.*?)\s*\[(\d+)\]", source)
     if match:
         return (match.group(1), match.group(2))
@@ -325,8 +408,8 @@ def tokenize(text: str) -> List[str]:
 
 
 def cite_source(source: str) -> str:
-    # "Live-Replay [948589646] (de-x-autogen) #1" -> "Live-Replay [948589646] #1"
-    # "Grundlagen-Webinar Tradingview(1)_transcript #3" -> "Grundlagen-Webinar Tradingview(1) #3"
+    # "Marktgespräch [123456789] (de-x-autogen) #1" -> "Marktgespräch [123456789] #1"
+    # "Marktkommentar Mai 2026_transcript #3" -> "Marktkommentar Mai 2026 #3"
     source = re.sub(r"_transcript(\s*#\d+)$", r"\1", source)
     return re.sub(r"\s+\([^)]*\)(\s*#\d+)$", r"\1", source)
 
@@ -367,12 +450,15 @@ def minmax(scores: dict) -> dict:
 
 class Pipeline:
     class Valves(BaseModel):
-        INDEX_DIR: str = "/data/faiss_capital_index"
+        # Public knowledge base (build_public_kb.py); any index built by ingest_capital_chunks.py works.
+        INDEX_DIR: str = "/data/faiss_public_index"
         # Must match --embedding_model in ingest_capital_chunks.py.
         EMBEDDING_MODEL: str = "text-embedding-3-large"
-        LLM_MODEL: str = "gpt-4o-mini"
-        # Model used for reranking/grading of retrieved chunks.
-        GRADER_MODEL: str = "gpt-4o-mini"
+        # gpt-4.1 follows multi-step chains across blocks better than gpt-4o-mini.
+        LLM_MODEL: str = "gpt-4.1"
+        # Model used for reranking/grading of retrieved chunks and the query-concept step.
+        # gpt-4.1-mini: own rate limits (gpt-4o-mini's daily request limit is shared with builds).
+        GRADER_MODEL: str = "gpt-4.1-mini"
         # Model for the claim-by-claim grounding check of the answer. A stronger
         # model than LLM_MODEL, so it catches textbook knowledge the answer model
         # slipped in.
@@ -393,13 +479,30 @@ class Pipeline:
         GRAPH_EXPAND_K: int = 4
         # Grading: keep chunks with supports_answer and relevance >= this.
         MIN_RELEVANCE: int = 6
-        TOP_K: int = 5
+        TOP_K: int = 6
+        # Causal chain search: the question's causes and effects are matched to graph concepts, and
+        # directed cause -> effect paths of up to CHAIN_MAX_HOPS steps between them are followed through
+        # the concept graph. The chunks stating the steps join the candidates; a path chunk only needs
+        # CHAIN_MIN_RELEVANCE, because a single step rarely answers the whole question by itself.
+        CHAIN_SEARCH: bool = True
+        CHAIN_MAX_HOPS: int = 4
+        CHAIN_PATHS: int = 3
+        CHAIN_EXTRA_K: int = 8
+        CHAIN_TOP_K: int = 6
+        CHAIN_MIN_RELEVANCE: int = 4
+        # Cosine similarity for matching a question concept to a graph concept.
+        CONCEPT_MIN_SIMILARITY: float = 0.55
         # The answer is generated in full, then every claim must be backed by a
         # verbatim quote from the context before anything is shown. Unsupported
         # claims are removed (up to MAX_REVISIONS rewrites); if some remain, no
         # answer is given. Disabling this streams the unchecked answer directly.
         CHECK_ANSWER_GROUNDING: bool = True
         MAX_REVISIONS: int = 2
+        # After the check: further blocks that state the same as an answer sentence are cited there too, so a
+        # step backed by several sources shows all of them. Each added citation needs a verbatim quote from
+        # exactly that block; opinion blocks are not added (they would need a source attribution).
+        CORROBORATE: bool = True
+        CORROBORATE_MAX_PER_LINE: int = 2
         # Progress is shown as one status line that updates step by step. This
         # additionally writes the full step log (incl. rejected claims) into a
         # collapsible "thinking" block - useful for debugging.
@@ -424,6 +527,12 @@ class Pipeline:
         self.concept_chunks = {}
         self.concept_neighbors = {}
         self.concept_summaries = {}
+        # Directed graph for the chain search: source -> {target: total edge weight}, and unit vectors
+        # of the concept names (rows in concept_names order) to match question concepts.
+        self.out_edges = {}
+        self.concept_names = []
+        self.concept_vectors = None
+        self.concept_extractor = None
         # Recent questions -> what the follow-up task needs (see _follow_ups).
         self.recent = OrderedDict()
         self.llm = None
@@ -431,6 +540,7 @@ class Pipeline:
         self.reviser = None
         self.grader = None
         self.checker = None
+        self.corroborator = None
 
     def _load(self):
         # Loads the index built by ingest_capital_chunks.py. Does NOT run ingestion.
@@ -458,7 +568,9 @@ class Pipeline:
         self.grader = grader_llm.with_structured_output(Grade)
         check_llm = ChatOpenAI(model=self.valves.CHECK_MODEL, temperature=0)
         self.checker = check_llm.with_structured_output(AnswerCheck)
+        self.corroborator = check_llm.with_structured_output(Corroborations)
         self.explorer = grader_llm.with_structured_output(Suggestions)
+        self.concept_extractor = grader_llm.with_structured_output(QueryConcepts)
         # Revisions use the stronger model too: gpt-4o-mini tended to keep the
         # flagged statement in slightly different words.
         self.reviser = check_llm
@@ -494,11 +606,38 @@ class Pipeline:
             graph = json.load(f)
         for node in graph["nodes"]:
             self.concept_chunks[node["id"]] = [c for c in node["chunk_ids"] if c in self.docs]
+        self.out_edges = {}
         for edge in graph["edges"]:
             key = (edge["source"], edge["target"], edge["direction"])
             self.relation_chunks[key] = [e["chunk_id"] for e in edge["evidence"]]
             for a, b in ((edge["source"], edge["target"]), (edge["target"], edge["source"])):
                 self.concept_neighbors.setdefault(a, Counter())[b] += edge["weight"]
+            if edge["source"] != edge["target"]:
+                self.out_edges.setdefault(edge["source"], Counter())[edge["target"]] += edge["weight"]
+        if self.valves.CHAIN_SEARCH:
+            self._load_concept_vectors()
+
+    def _load_concept_vectors(self):
+        # Embeddings of all concept names, cached next to the index (concept_vectors.npz) and only
+        # recomputed when the graph's concepts change.
+        names = sorted(self.concept_chunks)
+        path = os.path.join(self.valves.INDEX_DIR, "concept_vectors.npz")
+        if os.path.exists(path):
+            cached = np.load(path, allow_pickle=False)
+            if list(cached["names"]) == names:
+                self.concept_names, self.concept_vectors = names, cached["vectors"]
+                return
+        try:
+            vectors = np.array(OpenAIEmbeddings(model=self.valves.EMBEDDING_MODEL).embed_documents(names))
+        except Exception as e:
+            print(f"[capital_rag] Concept vectors failed, chain search disabled: {e}")
+            return
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        self.concept_names, self.concept_vectors = names, vectors.astype(np.float32)
+        try:
+            np.savez(path, names=np.array(names), vectors=self.concept_vectors)
+        except OSError as e:
+            print(f"[capital_rag] Could not cache concept vectors: {e}")
 
     async def on_startup(self):
         self._load()
@@ -549,7 +688,100 @@ class Pipeline:
                         extra.append((other, 0.0))
         return candidates + extra[: self.valves.GRAPH_EXPAND_K]
 
-    def _grade(self, query: str, candidates: List[tuple]) -> List[tuple]:
+    def _match_concepts(self, phrases: List[str]) -> dict:
+        # Question concept phrases -> graph concepts (top 3 per phrase above CONCEPT_MIN_SIMILARITY).
+        if not phrases or self.concept_vectors is None:
+            return {}
+        vectors = np.array(self.vectorstore.embedding_function.embed_documents(phrases), dtype=np.float32)
+        vectors /= np.linalg.norm(vectors, axis=1, keepdims=True)
+        matched = {}
+        for row in vectors @ self.concept_vectors.T:
+            for i in np.argsort(row)[::-1][:3]:
+                if row[i] >= self.valves.CONCEPT_MIN_SIMILARITY:
+                    name = self.concept_names[i]
+                    matched[name] = max(float(row[i]), matched.get(name, 0.0))
+        return matched
+
+    def _causal_paths(self, question: str) -> List[List[str]]:
+        # Directed cause -> effect paths through the concept graph, from the question's causes to its
+        # effects (breadth-first, so shorter paths first). Without effects: the strongest onward chains.
+        asked = self.concept_extractor.invoke(QUERY_CONCEPTS_PROMPT.format(question=question))
+        starts = self._match_concepts(asked.causes)
+        ends = self._match_concepts(asked.effects)
+        if not starts:
+            return []
+        max_hops, wanted = self.valves.CHAIN_MAX_HOPS, self.valves.CHAIN_PATHS
+        paths = []
+        if ends:
+            # Breadth-first with up to 3 predecessors per concept (strongest edges first), then every
+            # reached effect is traced back to the causes.
+            preds, frontier, seen = {}, list(starts), set(starts)
+            for _ in range(max_hops):
+                nxt = []
+                for node in frontier:
+                    for target, _ in self.out_edges.get(node, Counter()).most_common(30):
+                        if target in starts:
+                            continue
+                        if len(preds.setdefault(target, [])) < 3 and node not in preds[target]:
+                            preds[target].append(node)
+                        if target not in seen:
+                            seen.add(target)
+                            nxt.append(target)
+                frontier = nxt
+
+            def back(node: str, path: List[str]) -> Iterator[List[str]]:
+                if node in starts:
+                    yield [node] + path
+                    return
+                if len(path) >= max_hops:
+                    return
+                for prev in preds.get(node, []):
+                    if prev not in path:
+                        yield from back(prev, [node] + path)
+
+            for end in sorted(ends, key=ends.get, reverse=True):
+                for path in back(end, []):
+                    if len(path) > 1 and path not in paths:
+                        paths.append(path)
+        else:
+            # Strongest onward chain from each cause, branching at the first step.
+            for start in sorted(starts, key=starts.get, reverse=True)[:2]:
+                for first, _ in self.out_edges.get(start, Counter()).most_common(2):
+                    path = [start, first]
+                    while len(path) <= max_hops:
+                        options = [t for t, _ in self.out_edges.get(path[-1], Counter()).most_common(5)
+                                   if t not in path]
+                        if not options:
+                            break
+                        path.append(options[0])
+                    paths.append(path)
+        # Shorter and better-supported paths first.
+        support = lambda p: sum(self.out_edges[a][b] for a, b in zip(p, p[1:]))
+        paths.sort(key=lambda p: (len(p), -support(p)))
+        return paths[:wanted]
+
+    def _path_chunks(self, paths: List[List[str]], present: set) -> List[int]:
+        # The chunks that state the steps of the paths: a greedy cover, preferring chunks that state
+        # several steps at once (typically a chain text).
+        step_chunks = {}
+        for path in paths:
+            for a, b in zip(path, path[1:]):
+                ids = {c for (s, t, _), chunks in self.relation_chunks.items() if s == a and t == b for c in chunks}
+                step_chunks[(a, b)] = {c for c in ids if c in self.docs}
+        uncovered, chosen = set(step_chunks), []
+        while uncovered and len(chosen) < self.valves.CHAIN_EXTRA_K:
+            best = max(
+                {c for step in uncovered for c in step_chunks[step]},
+                key=lambda c: (sum(c in step_chunks[s] for s in uncovered), c in present),
+                default=None,
+            )
+            if best is None:
+                break
+            chosen.append(best)
+            uncovered = {s for s in uncovered if best not in step_chunks[s]}
+        return chosen
+
+    def _grade(self, query: str, candidates: List[tuple], path_ids: frozenset = frozenset()) -> List[tuple]:
         # reranking.py-style 0-10 LLM scoring combined with reliable_rag's
         # relevance grading: unsupported chunks are dropped before generation.
         docs = [self.docs[chunk_id] for chunk_id, _ in candidates]
@@ -563,15 +795,21 @@ class Pipeline:
             config={"max_concurrency": 8},
             return_exceptions=True,
         )
-        kept = []
+        kept, steps = [], []
         for (chunk_id, fused), doc, grade in zip(candidates, docs, grades):
             if isinstance(grade, Exception):
                 print(f"[capital_rag] Grading failed for chunk {chunk_id}: {grade}")
                 continue
             if grade.supports_answer and grade.relevance >= self.valves.MIN_RELEVANCE:
                 kept.append((doc, grade, fused))
+            elif (chunk_id in path_ids or grade.states_step) and grade.relevance >= self.valves.CHAIN_MIN_RELEVANCE:
+                # A step of the asked chain (from the graph's causal paths or as judged by the grader):
+                # relevant as a link even if it alone does not answer, so a chain can be built from several
+                # sources instead of the one block that covers the most.
+                steps.append((doc, grade, fused))
         kept.sort(key=lambda hit: (hit[1].relevance, hit[2]), reverse=True)
-        return kept[: self.valves.TOP_K]
+        steps.sort(key=lambda hit: hit[1].relevance, reverse=True)
+        return kept[: self.valves.TOP_K] + steps[: self.valves.CHAIN_TOP_K]
 
     def _explore(
         self, query: str, candidates: List[tuple], answered: bool = False, exclude: set = frozenset()
@@ -717,13 +955,39 @@ class Pipeline:
                 if names_video(paragraph_of(answer, claim.answer_sentence), videos):
                     continue
                 titles = " / ".join(f'"{title}"' for title, _ in videos)
-                problem = f"missing video attribution: name the video {titles} in this paragraph"
+                problem = f"missing source attribution: name the source {titles} in this paragraph"
             else:
                 continue
             print(f"[capital_rag] {problem}: {claim.claim!r} (quote: {claim.quote!r})")
             unsupported.append(f"{claim.claim} ({problem})")
             sentences.append(claim.answer_sentence)
         return unsupported, has_facts, sentences
+
+    def _corroborate(self, answer: str, context: str, blocks: List[dict]) -> tuple:
+        # Cites further blocks in lines of the checked answer (a chain step is one line) when they state the
+        # same. Accepted only if the line cites something already, the block is a concept block not yet cited
+        # there, and the quote really is in that block. Returns the answer and the number added.
+        lines = answer.split("\n")
+        numbered = "\n".join(f"L{i}: {line}" for i, line in enumerate(lines, start=1) if line.strip())
+        found = self.corroborator.invoke(CORROBORATE_PROMPT.format(context=context, answer=numbered))
+        added = {}
+        for item in found.items:
+            if not (item.same_statement and 1 <= item.line <= len(lines) and 1 <= item.block <= len(blocks)):
+                continue
+            line, block = lines[item.line - 1], blocks[item.block - 1]
+            new = added.get(item.line, set())
+            cited = cited_numbers(line, len(blocks))
+            if (not cited or item.block in cited | new or block["opinion"]
+                    or len(new) >= self.valves.CORROBORATE_MAX_PER_LINE
+                    or not quote_in_context(item.quote, block["text"])):
+                continue
+            added.setdefault(item.line, set()).add(item.block)
+        for number, blocks_added in added.items():
+            # The new citations go right after the line's last citation group.
+            line = lines[number - 1]
+            last = list(re.finditer(r"\[\d+(?:\s*,\s*\d+)*\]", line))[-1]
+            lines[number - 1] = line[: last.end()] + "".join(f"[{n}]" for n in sorted(blocks_added)) + line[last.end():]
+        return "\n".join(lines), sum(len(n) for n in added.values())
 
     def _grounded_answer(self, question: str, context: str, blocks: List[dict]) -> Iterator[tuple]:
         # Yields ("status", short, detail) progress steps and finally
@@ -869,10 +1133,25 @@ class Pipeline:
                 f"Konzeptgraph: {len(expanded) - len(candidates)} verwandte Abschnitte ergänzt"
             )
         candidates = expanded
+        paths, path_ids = [], frozenset()
+        if self.valves.CHAIN_SEARCH and self.concept_vectors is not None:
+            yield from step("Suche Wirkungsketten im Konzeptgraphen …")
+            try:
+                paths = self._causal_paths(user_message)
+            except Exception as e:
+                print(f"[capital_rag] Chain search failed: {e}")
+            if paths:
+                present = {chunk_id for chunk_id, _ in candidates}
+                path_ids = frozenset(self._path_chunks(paths, present))
+                candidates = candidates + [(c, 0.0) for c in path_ids if c not in present]
+                yield from step(
+                    f"{len(paths)} Wirkungskette(n) mit bis zu {max(len(p) - 1 for p in paths)} Schritten gefunden",
+                    "Wirkungsketten:\n" + "\n".join(f"  - {' → '.join(p)}" for p in paths),
+                )
         grounded = []
         if candidates:
             yield from step(f"Bewerte die Relevanz von {len(candidates)} Abschnitten …")
-            grounded = self._grade(user_message, candidates)
+            grounded = self._grade(user_message, candidates, path_ids)
 
         if not grounded:
             yield from no_answer("Keine relevanten Abschnitte gefunden")
@@ -914,6 +1193,26 @@ class Pipeline:
                 }
             )
         context = "\n\n".join(b["text"] for b in blocks)
+        # Causal paths whose every step is stated by a selected block, with those block numbers.
+        path_lines = []
+        for path in paths:
+            refs = []
+            for a, b in zip(path, path[1:]):
+                nums = [
+                    i for i, (doc, _, _) in enumerate(grounded, start=1)
+                    if any(r["source"] == a and r["target"] == b for r in doc.metadata.get("relations", []))
+                ]
+                refs.append(nums)
+            if all(refs):
+                line = path[0] + "".join(
+                    f" -> {b} [{', '.join(map(str, nums))}]" for b, nums in zip(path[1:], refs)
+                )
+                path_lines.append(f"- {line}")
+        if path_lines:
+            context = (
+                "Causal paths (relations found across the sources; [n] = block that states the step):\n"
+                + "\n".join(path_lines) + "\n\n" + context
+            )
 
         # None = follow-ups are computed later by the follow-up task (_follow_ups).
         suggestions = None
@@ -937,6 +1236,15 @@ class Pipeline:
             if not has_facts:
                 # The answer only says the sources don't cover the question.
                 suggestions = yield from find_related("Die Quellen beantworten die Frage nicht")
+            elif self.valves.CORROBORATE and len(blocks) > 1:
+                yield from step("Suche weitere Belege in den anderen Quellen …")
+                try:
+                    answer, added = self._corroborate(answer, context, blocks)
+                    if added:
+                        yield from step(f"{added} weitere Beleg(e) aus anderen Quellen ergänzt")
+                except Exception as e:
+                    # Only adds citations: on failure the checked answer stays as it is.
+                    print(f"[capital_rag] Corroboration failed: {e}")
             cited = cited_numbers(answer, len(grounded))
             yield from step(f"Antwort geprüft ✓ ({len(cited)} Quellen)", done=True)
             yield from close_log()

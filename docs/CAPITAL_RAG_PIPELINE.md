@@ -4,13 +4,19 @@ Technical documentation of the Capital Markets RAG pipeline: what it does, how d
 through it, how it keeps the model from hallucinating, and what happens when a step fails.
 For the design rationale behind each step, see [`CAPITAL_RAG_BEST_PRACTICES.md`](CAPITAL_RAG_BEST_PRACTICES.md).
 
+> **Scope.** This reference explains the core pipeline with its original corpus, transcribed capital-markets videos
+> (`faiss_capital_index`), as the running example. The public site runs the same pipeline on the public knowledge base
+> (`faiss_public_index`: Wikipedia, own explanatory texts and cause → effect chain texts). The newer steps (causal
+> chain search, chain-step chunks, corroboration) and the evaluation are described in the
+> [README](../README.md#how-a-question-is-answered).
+
 | File | Role |
 |------|------|
-| [`pdfs/ingest_capital_chunks.py`](../pdfs/ingest_capital_chunks.py) | Offline ingestion: classification, embedding, summaries, concept graph |
+| [`data/ingest_capital_chunks.py`](../data/ingest_capital_chunks.py) | Offline ingestion: classification, embedding, summaries, concept graph |
 | [`pipelines-capital/capital_rag_pipeline.py`](../pipelines-capital/capital_rag_pipeline.py) | Query-time pipeline served to Open WebUI |
-| [`pdfs/generate_start_suggestions.py`](../pdfs/generate_start_suggestions.py) | Builds verified start-page questions |
-| [`pdfs/apply_start_suggestions.py`](../pdfs/apply_start_suggestions.py) | Writes those questions onto the model in Open WebUI |
-| [`all_rag_techniques_runnable_scripts/`](../all_rag_techniques_runnable_scripts/) | Reference implementations the pipeline is adapted from |
+| [`data/generate_start_suggestions.py`](../data/generate_start_suggestions.py) | Builds verified start-page questions |
+| [`data/apply_start_suggestions.py`](../data/apply_start_suggestions.py) | Writes those questions onto the model in Open WebUI |
+| `all_rag_techniques_runnable_scripts/` | Reference implementations the pipeline is adapted from (third-party code, not in the repository) |
 
 ---
 
@@ -60,7 +66,7 @@ flowchart LR
     B[Browser<br/>localhost:3000] -->|HTTP| OW[open-webui<br/>container :8080]
     OW -->|OpenAI-compatible<br/>chat request| PC[pipelines-capital<br/>container :9099<br/>not published]
     PC -->|embeddings, chat,<br/>structured output| OA[(OpenAI API)]
-    PC ---|bind mount /data| IDX[(pdfs/faiss_capital_index/<br/>index.faiss, index.pkl,<br/>graph.json, summaries.json, ...)]
+    PC ---|bind mount /data| IDX[(data/faiss_capital_index/<br/>index.faiss, index.pkl,<br/>graph.json, summaries.json, ...)]
     PC ---|bind mount /app/pipelines| PY[pipelines-capital/<br/>capital_rag_pipeline.py]
     OW ---|bind mount /data| IDX
 ```
@@ -70,10 +76,9 @@ flowchart LR
   `/app/pipelines`, so `capital_rag_pipeline.py` is loaded automatically on startup. Valve values
   saved in the UI are persisted to `pipelines-capital/capital_rag_pipeline/valves.json`.
 - The **index is not built in the container at startup.** It is created once, offline, by
-  `ingest_capital_chunks.py` and read from `/data/faiss_capital_index`.
+  `ingest_capital_chunks.py` and read from `INDEX_DIR` (default `/data/faiss_public_index`).
 - `OPENAI_API_KEY` comes from `.env` through `${OPENAI_API_KEY}` in the compose file.
-- Open WebUI's `PIPELINES_URL` points only at the climate pipelines server. **You have to add the capital
-  server as a second connection yourself**: *Admin Panel → Settings → Connections → OpenAI API → +*
+- **Add the pipelines server as a connection in Open WebUI yourself**: *Admin Panel → Settings → Connections → OpenAI API → +*
   with URL `http://pipelines-capital:9099` and the Pipelines API key (`PIPELINES_API_KEY` from `.env`). The pipelines
   ports are not published on the host, since the key allows uploading and running Python code.
 - In the model picker, the model appears as **"Capital Markets RAG"** with model id
@@ -92,7 +97,7 @@ flowchart LR
 
 ## 3. Source data: `extracted_v2_all.json`
 
-Ingestion starts from `pdfs/faiss_capital_index/extracted_v2_all.json`. This file is the source of truth.
+Ingestion starts from `data/faiss_capital_index/extracted_v2_all.json`. This file is the source of truth.
 It is created **outside this repository** (transcript chunking and extraction) and is git-ignored together
 with the rest of the index directory. Each element is one chunk:
 
@@ -109,7 +114,7 @@ with the rest of the index directory. Each element is one chunk:
 | `conditions` | str | Shown in the context block |
 | `evidence` | str | Stored in metadata |
 | `market_domain` | list[str] | Start-suggestion diversity |
-| `sources` | list[str] | Video labels such as `"Live-Replay [948589646] (de-x-autogen) #1"` |
+| `sources` | list[str] | Video labels such as `"Marktkommentar Mai 2026 #4"` or `"Marktgespräch [123456789] (de-x-autogen) #1"` |
 
 The video label format matters. `parse_video()` / `cite_source()` read
 `Title [numeric-id] (lang) #n` or `Title_transcript #n` from it, to attribute opinions and to check
@@ -206,7 +211,7 @@ not saved in `index.pkl`, so the pipeline passes them again when it loads the in
 
 The graph is built from original chunks only. Summaries carry no relations.
 
-### Output files (all in `pdfs/faiss_capital_index/`, all git-ignored)
+### Output files (all in `data/faiss_capital_index/`, all git-ignored)
 
 | File | Produced by | Read by |
 |------|-------------|---------|
@@ -229,10 +234,10 @@ flowchart TD
     I -->|no| ERR[message: run ingestion]
     I -->|yes| R[5.2 Fusion retrieval<br/>dense HyPE + BM25 → top 12]
     R --> GX[5.3 Graph expansion<br/>+ up to 4 chunks with same relation]
-    GX --> GR[5.4 LLM grading per chunk<br/>keep supports_answer AND relevance ≥ 6<br/>top 5]
+    GX --> GR[5.4 LLM grading per chunk<br/>keep supports_answer AND relevance ≥ 6<br/>top 6]
     GR -->|none kept| NA[No answer + explorer]
     GR --> CTX[5.5 Build context blocks<br/>CONCEPT / OPINION labels,<br/>TIMELESS / TIME-BOUND relations]
-    CTX --> GEN[5.6 Generate answer<br/>gpt-4o-mini, context only]
+    CTX --> GEN[5.6 Generate answer<br/>gpt-4.1, context only]
     GEN --> CHK[5.7 Claim-by-claim check<br/>gpt-4o + code-side verification]
     CHK -->|all supported| OUT[Answer + cited sources]
     CHK -->|problems| REV[Revise with gpt-4o<br/>max 2 times]
@@ -256,7 +261,7 @@ The pipeline handles them differently from user questions:
 
 - **Follow-up task** (regex `^### Task:\s*Suggest .*follow-up questions`): answered by the explorer (§8),
   not by the LLM, so follow-up chips only offer questions the index can answer.
-- **Other tasks** (chat title, tags): passed directly to `gpt-4o-mini`.
+- **Other tasks** (chat title, tags): passed directly to `LLM_MODEL` (`gpt-4.1`).
 - If either fails, the pipeline returns `{}` so Open WebUI does not break.
 
 ### 5.2 Fusion retrieval (`_fusion_candidates`)
@@ -294,7 +299,7 @@ class Grade(BaseModel):
 ```
 
 A chunk is kept only if `supports_answer` **and** `relevance ≥ MIN_RELEVANCE (6)`. Kept chunks are sorted by
-`(relevance, fused score)` and cut to `TOP_K = 5`. The `reason` is reused later in the source list.
+`(relevance, fused score)` and cut to `TOP_K = 6`. The `reason` is reused later in the source list.
 This combines LLM reranking (`reranking.py`) with the relevance gate from reliable-RAG.
 
 ### 5.5 Context construction
@@ -302,7 +307,7 @@ This combines LLM reranking (`reranking.py`) with the relevance gate from reliab
 Each kept chunk becomes a numbered block:
 
 ```
-[2] Zinsen und Anleihepreise - OPINION (time-bound, stated in: Exklusiver Marktausblick_ Mai 2026 [123] #4)
+[2] Zinsen und Anleihepreise - OPINION (time-bound, stated in: Marktkommentar Mai 2026 #4)
 <chunk content>
 Relation [TIMELESS]: Leitzins -> Anleihepreise (negative, medium-term): Steigende Zinsen drücken ...
 Relation [TIME-BOUND]: EZB -> Zinsen (down, short-term): Er erwartet ... Conditions: ...
@@ -534,10 +539,10 @@ Editable in *Admin Panel → Settings → Pipelines* (select the capital connect
 
 | Valve | Default | Meaning |
 |-------|---------|---------|
-| `INDEX_DIR` | `/data/faiss_capital_index` | Index location inside the container |
+| `INDEX_DIR` | `/data/faiss_public_index` | Index location inside the container (`/data/faiss_capital_index` for the video corpus) |
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | **Must match** `--embedding_model` used at ingestion |
-| `LLM_MODEL` | `gpt-4o-mini` | Answer generation and background tasks |
-| `GRADER_MODEL` | `gpt-4o-mini` | Chunk grading and explorer |
+| `LLM_MODEL` | `gpt-4.1` | Answer generation and background tasks |
+| `GRADER_MODEL` | `gpt-4.1-mini` | Chunk grading, explorer and question concepts |
 | `CHECK_MODEL` | `gpt-4o` | Claim check and revisions |
 | `FETCH_K` | 40 | Raw hits per retriever (before chunk de-duplication) |
 | `MIN_SIMILARITY` | 0.35 | Cosine floor for dense hits |
@@ -546,7 +551,7 @@ Editable in *Admin Panel → Settings → Pipelines* (select the capital connect
 | `GRAPH_SEED_K` | 3 | Top candidates used as graph seeds |
 | `GRAPH_EXPAND_K` | 4 | Max chunks added by graph expansion |
 | `MIN_RELEVANCE` | 6 | Grader relevance floor (0–10) |
-| `TOP_K` | 5 | Chunks in the final context |
+| `TOP_K` | 6 | Chunks in the final context |
 | `CHECK_ANSWER_GROUNDING` | `True` | Turn off only for debugging. Answers are then unchecked. |
 | `MAX_REVISIONS` | 2 | Rewrite attempts before trimming |
 | `SHOW_THINKING_LOG` | `False` | Full step log in a collapsible `<think>` block |
@@ -573,7 +578,7 @@ Ingestion flags: `--index_dir`, `--chunks`, `--embedding_model`, `--llm_model`, 
 # first setup
 cp .env.example .env                       # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
-# put extracted_v2_all.json into pdfs/faiss_capital_index/
+# put extracted_v2_all.json into data/faiss_capital_index/
 docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py
 docker restart open-webui-pipelines-capital
 # add connection http://pipelines-capital:9099 in Open WebUI (see §2)
@@ -595,12 +600,12 @@ Approximate OpenAI calls per user question with the default valves:
 | Step | Model | Calls |
 |------|-------|-------|
 | Query embedding | text-embedding-3-large | 1 (+1 if the explorer falls back to nearest neighbors) |
-| Grading | gpt-4o-mini | ≤ 16 (parallel, 8 at a time) |
-| Answer | gpt-4o-mini | 1 |
+| Grading | gpt-4.1-mini | ≤ 16 (parallel, 8 at a time) |
+| Answer | gpt-4.1 | 1 |
 | Claim check | **gpt-4o** | 1–4 (initial + up to 2 after revisions + 1 after trimming) |
 | Revision | **gpt-4o** | 0–2 |
-| Explorer | gpt-4o-mini | 1 selection + ≤ 4 grading (only on no answer or the follow-up task) |
-| Title / tags tasks | gpt-4o-mini | 1 each |
+| Explorer | gpt-4.1-mini | 1 selection + ≤ 4 grading (only on no answer or the follow-up task) |
+| Title / tags tasks | gpt-4.1 | 1 each |
 
 The happy path is roughly 1 embedding, ~16 small grading calls, 1 answer and 1 `gpt-4o` check. Because the
 answer is checked before it is shown, the user waits for the whole sequence. The status line covers that wait.

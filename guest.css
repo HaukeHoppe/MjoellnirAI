@@ -12,3 +12,49 @@ button:has(img[src*="/users/"][src*="/profile/image"]) {
 [data-sonner-toast][data-type='success'] {
 	display: none !important;
 }
+
+/* No sidebar for visitors: chats are temporary, so there is no history to browse. Hides the collapsed rail
+   (desktop), the expanded panel and the phone's open-sidebar button. */
+#sidebar,
+#sidebar-toggle-button,
+div.select-none:has(#sidebar-new-chat-button) {
+	display: none !important;
+}
+
+/* Legal footer (inserted by Caddy, see Caddyfile): on phones the chat input reaches the bottom edge,
+   so it gets a little space below for the footer. */
+@media (max-width: 767px) {
+	form:has(#chat-input) {
+		margin-bottom: 14px !important;
+	}
+}
+
+/* Start-page suggestions are full cause -> effect questions: up to five lines instead of one, so they are
+   shown completely, never cut off with "…" (the longest is about three lines on a phone). */
+button.waterfall .line-clamp-1 {
+	-webkit-line-clamp: 5 !important;
+	line-clamp: 5 !important;
+}
+
+/* The suggestion list has a fixed height (h-36 / max-h-36) and scrolls; with three full questions that hides
+   the last one on phones. The list grows with its content instead. */
+div.h-36:has(button.waterfall),
+div.max-h-36:has(> button.waterfall) {
+	height: auto !important;
+	max-height: none !important;
+	overflow: visible !important;
+}
+
+/* Room below the list, so its last line never sits under the fixed legal footer. */
+div.h-36:has(button.waterfall) {
+	padding-bottom: 1.5rem !important;
+}
+
+/* The chain hint under each question (Auslöser → … → Wirkung) shows on every screen height: it tells the
+   visitor which cause -> effect chain the question explains. */
+
+/* The status steps of an answer are always listed (Dockerfile.open-webui opens the status history). The single
+   line above the list repeats its last step, so it is hidden while the list is shown. */
+div:has(> button[aria-expanded="true"] + div.flex-row > div.w-full) > button[aria-expanded="true"] {
+	display: none !important;
+}

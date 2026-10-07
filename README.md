@@ -1,14 +1,21 @@
 # Capital Markets RAG for Open WebUI
 
-A retrieval-augmented chat model for [Open WebUI](https://github.com/open-webui/open-webui) that answers
-questions about a capital-markets creator's videos **only from what the videos actually say**.
+A retrieval-augmented chat model for [Open WebUI](https://github.com/open-webui/open-webui) that explains
+**cause → effect chains on the capital markets** (how a rate decision, an oil shock or a crash propagates through
+markets, step by step) **only from what its sources actually say**. It runs publicly at https://mjoelnir.ai.
 
+The public knowledge base consists of German Wikipedia articles (CC BY-SA 4.0), own explanatory texts and own
+cause → effect chain texts (see [Ingestion](#ingestion-preparing-the-data)). The same pipeline can also run on a
+private corpus, such as transcribed videos (`faiss_capital_index`).
+
+- 🔗 **Follows chains across sources:** causal chain search through a concept graph, chain steps backed by several
+  sources, each step cited
 - 🔎 **Finds the real data:** several retrieval paths per passage (hypothetical-question vectors, BM25 keyword search,
-  concept graph, cross-video summaries)
+  concept graph, summaries across sources)
 - ✅ **Shows only verified answers:** every factual statement must be backed by a verbatim quote from the sources,
   and Python code checks the quote, not just the LLM
 - 🕰️ **Knows what goes stale:** timeless concepts are kept apart from time-bound opinions, and every opinion names the
-  video it came from
+  source it came from
 - 🚫 **Refuses instead of guessing,** then suggests related topics it *can* answer
 
 > **Deep-dive documentation**
@@ -44,18 +51,20 @@ questions about a capital-markets creator's videos **only from what the videos a
 
 ```mermaid
 flowchart LR
-    B[Browser<br/>localhost:3000] --> OW[open-webui<br/>container]
+    B[Browser] -->|HTTPS| CA[caddy<br/>VPS only]
+    CA --> OW[open-webui<br/>container]
     OW -->|OpenAI-compatible<br/>chat request| PC[pipelines-capital<br/>container<br/>capital_rag_pipeline.py]
     PC -->|embeddings, LLM calls| OA[(OpenAI API)]
-    PC --- IDX[(faiss_capital_index/<br/>FAISS index, graph.json,<br/>summaries.json)]
+    PC --- IDX[(data/faiss_public_index/<br/>FAISS index, graph.json,<br/>summaries.json)]
 ```
 
 | Component | What it is |
 |-----------|------------|
-| `open-webui` (port 3000) | Chat UI. The pipeline appears in the model picker as **Capital Markets RAG** |
+| `caddy` (ports 80/443, VPS only) | HTTPS entry point: certificate, guest sign-in, legal pages and footer ([`Caddyfile`](Caddyfile)) |
+| `open-webui` (port 3000, localhost only) | Chat UI. The pipeline appears in the model picker as **Capital Markets RAG** |
 | `pipelines-capital` (internal port 9099, not published) | Open WebUI Pipelines server that loads [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) at startup |
-| `pdfs/faiss_capital_index/` | Index built offline by [`pdfs/ingest_capital_chunks.py`](pdfs/ingest_capital_chunks.py), mounted at `/data` (git-ignored) |
-| OpenAI | `text-embedding-3-large` for embeddings; `gpt-4o-mini` for grading and answering; `gpt-4o` for checking and revising |
+| `data/` | Knowledge base and eval scripts plus the generated indexes (`faiss_public_index/`, optionally `faiss_capital_index/`, git-ignored), mounted at `/data` |
+| OpenAI | `text-embedding-3-large` for embeddings; `gpt-4.1` for answers; `gpt-4.1-mini` for grading and question concepts; `gpt-4o` for checking, revising and corroborating |
 
 The expensive reasoning about the corpus (classification, clustering, summaries, graph) is done **once at
 ingestion**. At query time, LLM calls go only to the question: grading, answering and verifying.
@@ -68,31 +77,42 @@ ingestion**. At query time, LLM calls go only to the question: grading, answerin
 flowchart TD
     Q[User question] --> R["1. Hybrid retrieval<br/>dense vectors + BM25, fused 60/40<br/>→ top 12"]
     R --> GX["2. Graph expansion<br/>+ ≤ 4 chunks asserting the same cause → effect"]
-    GX --> GR["3. LLM relevance gate<br/>supports_answer AND relevance ≥ 6/10<br/>→ top 5"]
+    GX --> CS["2b. Causal chain search<br/>question causes/effects → graph concepts,<br/>paths of ≤ 4 steps, + chunks stating each step"]
+    CS --> GR["3. LLM relevance gate<br/>supports_answer AND relevance ≥ 6/10 → top 6<br/>+ chunks stating a step of the chain<br/>(graph path or grader) with relevance ≥ 4 → top 6"]
     GR -->|nothing passes| NA[Refuse + suggest related topics]
     GR --> CTX["4. Context blocks labelled<br/>CONCEPT / OPINION, TIMELESS / TIME-BOUND"]
-    CTX --> GEN["5. Generate answer<br/>context only, cite every statement"]
+    CTX --> GEN["5. Generate answer (gpt-4.1)<br/>context only, cite every statement;<br/>mechanisms as numbered chain steps"]
     GEN --> CHK["6. Check every claim<br/>gpt-4o + code-side quote, cause<br/>and attribution checks"]
-    CHK -->|all supported| OUT["Answer + cited sources<br/>with relevance reasons"]
+    CHK -->|all supported| COR["7. Corroborate<br/>cite further concept blocks that state<br/>the same step (verbatim quote checked)"]
+    COR --> OUT["Answer + cited sources<br/>with relevance reasons"]
     CHK -->|problems| REV["Targeted revision<br/>max 2 rounds"]
     REV --> CHK
     CHK -->|still failing| TRIM["Remove flagged sentences,<br/>check again"]
-    TRIM -->|clean| OUT
+    TRIM -->|clean| COR
     TRIM -->|not clean| NA
 ```
 
 1. **Hybrid retrieval:** 40 vector hits (cosine ≥ 0.35) and the top 40 BM25 chunks are each min-max normalized, then
    fused as `0.6·dense + 0.4·bm25`. The top 12 are kept.
 2. **Graph expansion:** for the top 3 hits, other chunks that assert the same `(source → target, direction)`
-   relation, usually from other videos, are added.
-3. **Relevance gate:** each candidate is graded by an LLM with structured output. Only chunks that *directly help
-   answer* **and** score ≥ 6/10 are kept, at most 5.
-4. **Context:** each block is labelled as a timeless **CONCEPT** or a time-bound **OPINION** with its video. Its
+   relation, usually from other sources, are added.
+   **Causal chain search:** the question's causes and effects are matched to graph concepts, and directed paths of up
+   to 4 steps between them are followed; the chunks stating each step join the candidates.
+3. **Relevance gate:** each candidate is graded by an LLM with structured output. Chunks that *directly help
+   answer* **and** score ≥ 6/10 are kept (at most 6). Chunks that state a single step of the asked chain (found on a
+   graph path or marked by the grader) are kept from 4/10 (at most 6 more), so a chain can be built from several
+   sources.
+4. **Context:** each block is labelled as a timeless **CONCEPT** or a time-bound **OPINION** with its source. Its
    relations are tagged **TIMELESS** or **TIME-BOUND**.
 5. **Generation:** the answer may use only the context, with no textbook knowledge. It must keep the source's degree
-   of certainty, add no new cause → effect links, cite `[n]` everywhere and attribute every opinion to its video.
+   of certainty, add no new cause → effect links, cite `[n]` everywhere and attribute every opinion to its source.
+   Mechanism questions are answered as numbered chain steps, each with its own citation.
 6. **Verification:** the answer is **not streamed**. It is checked claim by claim and only then shown. A live status
    line ("Durchsuche die Quellen …", "Prüfe jede Aussage gegen die Quellen …") covers the wait.
+7. **Corroboration:** a step one block covers is often stated by other blocks too. gpt-4o names them with a verbatim
+   quote per answer line; the code accepts a block only if the quote really is in that block, the line already
+   cites a source and the block is a concept block. Its number is then added to that line (`[1][3]`), so a chain
+   shows all the sources that back it instead of only the one chain text that covers the most.
 
 The output lists **only the sources the answer actually cites**, each marked *Konzept*, *Zusammenfassung* or
 *Meinung (zeitgebunden)*, with the grader's reason for using it.
@@ -101,14 +121,38 @@ The output lists **only the sources the answer actually cites**, each marked *Ko
 
 ## Ingestion: preparing the data
 
+The public site answers from `data/faiss_public_index/` (the pipeline's default `INDEX_DIR`): German Wikipedia
+articles (CC BY-SA 4.0), own explanatory texts and own cause -> effect chains (how a shock propagates step by step,
+written by gpt-4.1), built by [`data/build_public_kb.py`](data/build_public_kb.py). The `normalize` stage maps all
+concept names to canonical English names, so the concept graph links chunks of different sources for the chain search.
+Use only sources you have the rights to publish. A private corpus (e.g. video transcripts as `extracted_v2_all.json`
+in `data/faiss_capital_index/`) is indexed with the same `ingest_capital_chunks.py` and selected via `INDEX_DIR`.
+
 ```sh
-docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py
+# 1. Wikipedia articles for the topic lists (free), check wiki_resolved.json, then metadata, own texts and
+#    chains (~3-4 $ from scratch; unchanged chunks are reused from the previous build)
+docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage fetch
+docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage build
+docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage normalize   # canonical concept names
+# 2. Index, graph, summaries; long runs: start with systemd-run so they survive the SSH session
+docker exec open-webui-pipelines-capital python /data/ingest_capital_chunks.py --index_dir /data/faiss_public_index
+# 3. Start suggestions, licence page, reload
+docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py --index_dir /data/faiss_public_index
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/faiss_public_index/start_suggestions.json
+#    or the three hand-picked questions shown on the public site (checked against the pipeline):
+docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/start_suggestions_public.json
+cp data/faiss_public_index/lizenzen.html legal/lizenzen.html
 docker restart open-webui-pipelines-capital
 ```
 
-Input: `pdfs/faiss_capital_index/extracted_v2_all.json`. These are pre-extracted transcript chunks with `title`,
-`content`, `embedding_text`, `hypothetical_questions`, `concepts`, `relations`, `sources`, and other fields. This file
-is produced outside this repo.
+`build_public_kb.py` writes the chunk format of `extracted_v2_all.json` (`title`, `content`, `embedding_text`,
+`hypothetical_questions`, `concepts`, `relations`, `sources`, ...) plus `lizenzen.html`, the attribution page Caddy
+serves at `/lizenzen` (linked in the footer), as CC BY-SA requires. Pass `--llm_model` / `--model` to use another
+model's daily request quota for a rebuild than the one the chat uses.
+
+[`data/eval_chains.py`](data/eval_chains.py) measures chain answers before and after a change: 15 tuning questions
+(`--set tuning`) or 20 held-out questions plus 3 control questions that must be refused (`--set validation`). An LLM
+judges chain steps, completeness, depth and refusals; the script also counts the sources each answer cites.
 
 ```mermaid
 flowchart LR
@@ -126,7 +170,7 @@ flowchart LR
 | **Concept / opinion** | Evergreen explanation vs. forecast, positioning or market view. **Mixed chunks count as opinion**, because a stale view shown as timeless is the worse error. Cached by content hash. |
 | **Relation class** | Each cause → effect relation is classified separately (one per request; batching proved unreliable), so a timeless mechanism inside an opinion chunk can still be stated generally. |
 | **HyPE embedding** | Each chunk is embedded under its `embedding_text` **and each hypothetical question**. Every vector resolves to the full chunk. Cosine similarity (normalized inner product). |
-| **Canonical summaries** | Concept chunks repeated across videos are clustered (agglomerative, cosine ≥ 0.73, measured on this corpus). Only clusters with ≥ 2 videos qualify, and opinions are never merged. Each cluster is summarized from the passages only, with disagreements stated. |
+| **Canonical summaries** | Concept chunks repeated across sources are clustered (agglomerative, cosine ≥ 0.73). Only clusters with ≥ 2 sources qualify, and opinions are never merged. Each cluster is summarized from the passages only, with disagreements stated. |
 | **Concept graph** | Nodes = concepts, edges = `source → target (direction)` with the chunks that assert them. |
 
 ---
@@ -140,20 +184,22 @@ flowchart LR
 | | Hybrid dense + BM25 with min-max fusion | Exact tickers and terms that embeddings blur |
 | | German + English stopwords for BM25 | Stop function words from matching every chunk |
 | | BM25 document includes the hypothetical questions | Keyword search also benefits from them |
-| | Relation-level graph expansion | Brings in the same mechanism from other videos |
-| | Cross-video canonical summaries | Complete explanations, less duplication in the context |
+| | Relation-level graph expansion | Brings in the same mechanism from other sources |
+| | Causal chain search over the concept graph | Multi-step chains whose steps are stated in different sources |
+| | Canonical summaries across sources | Complete explanations, less duplication in the context |
 | **Precision** | Low similarity floor + capped candidate list | Noise filtered cheaply, recall kept |
 | | LLM grade with *two* required conditions | Similarity is not relevance |
-| | At most 5 graded chunks in the context | Less to drift on, meaningful citations |
+| | At most 6 graded chunks + 6 chain-step chunks in the context | Less to drift on, meaningful citations |
 | **Faithfulness** | Source-only prompt, no textbook knowledge | The most common RAG leak |
 | | Verify before display | The user never sees an unchecked draft |
 | | Claim decomposition by a stronger model | Catches what the answer model slipped in |
 | | Deterministic quote, cause and attribution checks | The checker LLM is not trusted on its own |
 | | Fail closed | No answer beats a wrong answer |
+| | Corroboration with verified quotes | A chain step shows every source that states it |
 | **Time** | Concept/opinion + timeless/time-bound labels | Old forecasts are never presented as current facts |
 | | Conflicting views shown side by side | No merged pseudo-consensus |
 | **Engineering** | Pydantic structured outputs, temperature 0 | Reliable, reproducible decisions |
-| | Model tiering (mini for bulk work, `gpt-4o` for checks) | Quality where errors are costly |
+| | Model tiering (`gpt-4.1-mini` for grading, `gpt-4.1` for answers, `gpt-4o` for checks) | Quality where errors are costly |
 | | Content-hash caches, batch saves, rate-limit retries | Cheap, crash-safe re-ingestion |
 
 Details, code references and a manual test guide: [`docs/CAPITAL_RAG_BEST_PRACTICES.md`](docs/CAPITAL_RAG_BEST_PRACTICES.md).
@@ -174,14 +220,14 @@ quote must exist     normalized, ≥ 15 chars, exactly 1 sentence (2 only if the
 cause must match     claim_cause == quote_cause, otherwise "not stated in the sources"
 no stitching         several real sentences glued into one claim → split, not delete
 opinion attributed   quote from an OPINION block (and not a TIMELESS relation)
-                     → the answer paragraph must name that video's title or id
+                     → the answer paragraph must name that source's title or id
 ```
 
-**Why in code?** An LLM checker can invent a quote, stitch two sentences into a causal link, or lose "Im Video …"
-when it rewrites a claim. String checks can't be talked into accepting those.
+**Why in code?** An LLM checker can invent a quote, stitch two sentences into a causal link, or lose the source
+attribution ("Laut …") when it rewrites a claim. String checks can't be talked into accepting those.
 
 **Targeted revision.** Each problem type has its own fix: *delete* (and do not replace it with "the sources don't
-say …", which is itself a new claim), *add the video title*, or *split the statements*. At most 2 rounds, each
+say …", which is itself a new claim), *add the source title*, or *split the statements*. At most 2 rounds, each
 re-checked. As a last resort only the flagged sentences are removed and the remainder is checked again.
 
 **Example**
@@ -210,7 +256,7 @@ re-checked. As a last resort only the flagged sentences are removed and the rema
 
 ## Explorer mode
 
-Instead of a dead end, the pipeline suggests topics the videos **do** cover:
+Instead of a dead end, the pipeline suggests topics the sources **do** cover:
 
 1. Concepts of the nearest chunks are scored by rank and boosted by their graph neighbors.
 2. Only concepts that appear in ≥ 2 chunks are kept (no one-off mentions).
@@ -221,8 +267,8 @@ Instead of a dead end, the pipeline suggests topics the videos **do** cover:
 Suggestions appear in the reply after a refusal and as clickable follow-up chips. After a normal answer, the pipeline
 handles Open WebUI's follow-up background task itself, so the chips come from the data instead of being invented
 by the model. Start-page suggestions are verified the same way
-([`generate_start_suggestions.py`](pdfs/generate_start_suggestions.py) →
-[`apply_start_suggestions.py`](pdfs/apply_start_suggestions.py)).
+([`generate_start_suggestions.py`](data/generate_start_suggestions.py) →
+[`apply_start_suggestions.py`](data/apply_start_suggestions.py)).
 
 ---
 
@@ -231,21 +277,13 @@ by the model. Start-page suggestions are verified the same way
 ```sh
 cp .env.example .env                 # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
-
-# put extracted_v2_all.json into pdfs/faiss_capital_index/, then:
-docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py
-docker restart open-webui-pipelines-capital
+# then build the knowledge base and index as in "Ingestion" above (data/faiss_public_index/)
 ```
 
 In Open WebUI (http://localhost:3000): **Admin Panel → Settings → Connections → OpenAI API → +**
 with URL `http://pipelines-capital:9099` and the Pipelines API key (`PIPELINES_API_KEY` from `.env`). Then select **Capital Markets RAG** in the model picker.
 
-Optional start-page suggestions:
-
-```sh
-docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py
-docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py
-```
+Start-page suggestions: see step 3 in [Ingestion](#ingestion-preparing-the-data).
 
 ### Deploying to a VPS
 
@@ -256,7 +294,8 @@ certificate and forwards to Open WebUI on the internal network ([`Caddyfile`](Ca
 1. Point the domain's DNS A/AAAA record at the VPS; open ports 22, 80 and 443 in the firewall.
 2. In `.env` set `WEBUI_URL=https://your.domain`, `CORS_ALLOW_ORIGIN=https://your.domain` (no trailing slash),
    `ACME_EMAIL=<real address>` and `COMPOSE_PROFILES=vps`.
-3. Copy `pdfs/faiss_capital_index/` (and optionally `open-webui-data/`) to the VPS, then run `docker compose up -d --build`.
+3. Copy the project folder to the VPS (without `.env`, which is created there), run `docker compose up -d --build`,
+   then build the index there or copy `data/faiss_public_index/` along (and optionally `open-webui-data/`).
 
 **Open access without login (optional).** Caddy can sign every visitor in automatically as one shared guest
 account with role `user` (no admin rights; guests share its chat history), while the admin account is only
@@ -275,13 +314,27 @@ reachable through an SSH tunnel:
 
 Set a spending limit on the OpenAI key: anyone can now use it through the chat.
 
-**Site password.** Until the site has an Impressum and Datenschutzerklärung, Caddy shows a browser password
-prompt before anything of Open WebUI loads. Set `SITE_USER` and `SITE_PASSWORD_HASH` (from
-`docker exec caddy caddy hash-password --plaintext '<password>'`, in single quotes) in the VPS `.env`.
-To open the site publicly, delete the `basic_auth` lines in the [`Caddyfile`](Caddyfile) and reload Caddy.
+**Public access.** The site is open to everyone, without a password prompt: Caddy signs every visitor in as the
+guest account. To lock it again, put a `basic_auth` block in front of the site in the [`Caddyfile`](Caddyfile)
+(exempting `/impressum`, `/datenschutz` and `/lizenzen`, which must stay reachable) and reload Caddy.
+
+**Impressum and Datenschutzerklärung.** Caddy serves [`legal/impressum.html`](legal/impressum.html) at `/impressum`
+and [`legal/datenschutz.html`](legal/datenschutz.html) at `/datenschutz`. Caddy inserts
+a small permanent footer with both links into every Open WebUI page (bottom right); this needs the `replace-response`
+plugin, which is why Caddy is built from [`Dockerfile.caddy`](Dockerfile.caddy). Keep the privacy policy in sync with the setup: hoster,
+OpenAI, the browser storage it lists, temporary chats, and the 14-day log retention below.
+
+**Log retention (14 days).** The logs contain visitor IP addresses and model output derived from chats. On the VPS
+set `LOG_DRIVER=journald` in `.env` and limit the journal:
+
+```bash
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nMaxRetentionSec=14day\nMaxFileSec=1day\n' > /etc/systemd/journald.conf.d/retention.conf
+systemctl restart systemd-journald
+docker compose up -d   # recreates the containers with the new log driver; docker logs keeps working
+```
 
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
-> The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
 ---
 
@@ -291,12 +344,16 @@ Valves are edited in **Admin Panel → Settings → Pipelines**. The pipeline re
 
 | Valve | Default | Purpose |
 |-------|---------|---------|
+| `INDEX_DIR` | `/data/faiss_public_index` | Index the pipeline loads (`/data/faiss_capital_index` for a private corpus) |
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | Must match the model used at ingestion |
-| `LLM_MODEL` / `GRADER_MODEL` / `CHECK_MODEL` | `gpt-4o-mini` / `gpt-4o-mini` / `gpt-4o` | Answer / grading / verification |
+| `LLM_MODEL` / `GRADER_MODEL` / `CHECK_MODEL` | `gpt-4.1` / `gpt-4.1-mini` / `gpt-4o` | Answer / grading and question concepts / verification, revision, corroboration |
 | `FETCH_K` · `MIN_SIMILARITY` · `ALPHA` | 40 · 0.35 · 0.6 | Retrieval breadth, dense floor, dense weight |
 | `CANDIDATE_K` · `GRAPH_SEED_K` · `GRAPH_EXPAND_K` | 12 · 3 · 4 | Candidate pool and graph expansion |
-| `MIN_RELEVANCE` · `TOP_K` | 6 · 5 | Relevance gate and context size |
+| `MIN_RELEVANCE` · `TOP_K` | 6 · 6 | Relevance gate and context size |
+| `CHAIN_SEARCH` · `CHAIN_MAX_HOPS` · `CHAIN_PATHS` · `CHAIN_EXTRA_K` | `True` · 4 · 3 · 8 | Causal chain search: on/off, steps per path, paths, extra chunks |
+| `CHAIN_TOP_K` · `CHAIN_MIN_RELEVANCE` · `CONCEPT_MIN_SIMILARITY` | 6 · 4 · 0.55 | Chain-step chunks in the context, their relevance bar, question-to-concept matching |
 | `CHECK_ANSWER_GROUNDING` · `MAX_REVISIONS` | `True` · 2 | Claim check and revision rounds |
+| `CORROBORATE` · `CORROBORATE_MAX_PER_LINE` | `True` · 2 | After the check, cite further blocks stating the same step |
 | `SHOW_THINKING_LOG` | `False` | Full step log including rejected claims in the chat |
 | `EXPLORE_MODE` · `EXPLORE_SUGGESTIONS` · `EXPLORE_MIN_CHUNKS` | `True` · 4 · 2 | Related-topic suggestions |
 
@@ -327,13 +384,14 @@ When an answer is missing, find which stage is responsible:
 | Path | Contents |
 |------|----------|
 | [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) | The query-time pipeline |
-| [`pdfs/ingest_capital_chunks.py`](pdfs/ingest_capital_chunks.py) | Offline ingestion (classification, embedding, summaries, graph) |
-| [`pdfs/generate_start_suggestions.py`](pdfs/generate_start_suggestions.py), [`pdfs/apply_start_suggestions.py`](pdfs/apply_start_suggestions.py) | Verified start-page questions |
-| `pdfs/faiss_capital_index/` | Generated index and caches (git-ignored) |
-| [`all_rag_techniques_runnable_scripts/`](all_rag_techniques_runnable_scripts/) | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …) |
+| [`data/ingest_capital_chunks.py`](data/ingest_capital_chunks.py) | Offline ingestion (classification, embedding, summaries, graph) |
+| [`data/generate_start_suggestions.py`](data/generate_start_suggestions.py), [`data/apply_start_suggestions.py`](data/apply_start_suggestions.py) | Verified start-page questions |
+| [`data/build_public_kb.py`](data/build_public_kb.py) | Builds the public knowledge base (Wikipedia + own texts) and the licence page |
+| `data/faiss_public_index/`, `data/faiss_capital_index/` | Generated indexes and caches (git-ignored) |
+| [`legal/`](legal/) | Impressum, Datenschutzerklärung, Lizenzen (served by Caddy) |
+| `all_rag_techniques_runnable_scripts/` | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …); third-party code, kept locally, not in the repository |
 | [`docs/`](docs/) | Detailed documentation |
 | [`docker-compose.yaml`](docker-compose.yaml), `Dockerfile.*`, [`requirements.txt`](requirements.txt) | Container setup |
-| [`CHANGELOG.md`](CHANGELOG.md) | Change history |
 
 ---
 
@@ -343,7 +401,10 @@ When an answer is missing, find which stage is responsible:
 - Status messages and the refusal text are in German. Answers follow the question's language.
 - Grounding is lexical: a correct paraphrase spread over several source sentences may be rejected. This is intended:
   a false refusal is better than a false claim.
-- There is no automated evaluation set yet.
+- The evaluation ([`data/eval_chains.py`](data/eval_chains.py)) is judged by an LLM on 35 questions; scores vary
+  between runs, so small differences are noise.
+- The concept graph is sparse (most concept names occur once), so the chain search finds paths for only some
+  questions; chains are mostly built from the chain texts and the grader's step chunks.
 - `index.pkl` is a pickle. Only load indexes you built yourself.
 
 More, with suggested approaches: [`docs/CAPITAL_RAG_BEST_PRACTICES.md` §14](docs/CAPITAL_RAG_BEST_PRACTICES.md#14-not-implemented-yet).

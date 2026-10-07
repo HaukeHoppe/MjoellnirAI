@@ -4,3 +4,19 @@ FROM ghcr.io/open-webui/open-webui:v0.11.4
 COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Start-screen text in the message box (and above it when no model is selected): Open WebUI has no setting for
+# it, so the translation call in the built frontend gets the German question instead. Only the calls t("...")
+# change, not the translation tables. Fails the build if a new release no longer contains the call.
+RUN files=$(grep -rlF 't("How can I help you today?")' /app/build/_app/immutable) \
+    && test -n "$files" \
+    && sed -i 's/t("How can I help you today?")/t("Welche Ursache-Wirkungskette am Finanzmarkt interessiert dich?")/g' $files \
+    && ! grep -rqF 't("How can I help you today?")' /app/build/_app/immutable
+
+# Status steps of an answer (Durchsuche die Quellen … → Antwort geprüft ✓) as a list that is always open and grows
+# live, instead of one line that has to be clicked to show the history: StatusHistory.svelte's prop "expand"
+# defaults to true. Matched by the code around it, not the minified names; fails the build if it is gone.
+RUN files=$(grep -rlE '"statusHistory",24,\(\)=>\[\]\),[A-Za-z_$]+=[A-Za-z_$]+\([A-Za-z_$]+,"expand",8,!1\)' /app/build/_app/immutable) \
+    && test -n "$files" \
+    && sed -i -E 's/("statusHistory",24,\(\)=>\[\]\),[A-Za-z_$]+=[A-Za-z_$]+\([A-Za-z_$]+,"expand",8,)!1\)/\1!0)/' $files \
+    && grep -rqE '"statusHistory",24,\(\)=>\[\]\),[A-Za-z_$]+=[A-Za-z_$]+\([A-Za-z_$]+,"expand",8,!0\)' /app/build/_app/immutable
