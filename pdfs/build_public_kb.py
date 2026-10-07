@@ -604,9 +604,11 @@ market, period, example or wording of it). Examples:
 - "US Technology Stocks" -> "Technology Stocks"
 - "Arbeitslosigkeit USA" -> "Unemployment"
 Keep a change as a change and a level as a level: "Oil Price Increase" may not become "Oil Price", "Oil Price"
-may not become "Oil Price Increase". Never pick an opposite or another direction ("Interest Rate Cut" is not
-"Interest Rate Hike"), a different quantity, a cause or an effect of the concept, or only a part of it.
-If no candidate fits, choose 0. Answer for every concept.
+may not become "Oil Price Increase", "Falling VIX" may not become "Volatility". A specific case may become its
+general form, never the other way round ("Risk Return Ratio" is not "Sharpe Ratio"). Never pick an opposite or
+another direction ("Interest Rate Cut" is not "Interest Rate Hike"), a different quantity, a related measure or
+policy ("Fixed Exchange Rates" is not "Central Bank Intervention"), a cause or an effect of the concept, or only
+a part of it. When in doubt, choose 0: a wrong link is worse than none. Answer for every concept.
 
 {items}"""
 
@@ -710,7 +712,7 @@ def anchor_names(llm, chunks: List[dict], final: dict, anchors_path: str, min_us
 
 
 def stage_normalize(model: str, similarity: float, out_dir: str, retranslate: bool, anchor_min_uses: int,
-                    anchor_similarity: float):
+                    anchor_similarity: float, anchor_model: str):
     path = f"{out_dir}/extracted_v2_all.json"
     chunks = json.load(open(path, encoding="utf-8"))
     print(f"Before: {graph_stats(chunks)}")
@@ -750,7 +752,9 @@ def stage_normalize(model: str, similarity: float, out_dir: str, retranslate: bo
 
     # 3. Rare relation ends -> core concepts.
     if anchor_min_uses:
-        anchored = anchor_names(llm, chunks, final, f"{out_dir}/concept_anchors.json", anchor_min_uses,
+        # The stronger model: a wrong link joins unrelated chains, which a missed link does not.
+        anchor_llm = ChatOpenAI(model=anchor_model, temperature=0, max_retries=10, timeout=180)
+        anchored = anchor_names(anchor_llm, chunks, final, f"{out_dir}/concept_anchors.json", anchor_min_uses,
                                 anchor_similarity)
         final = {n: anchored.get(f, f) for n, f in final.items()}
         print(f"  {len(anchored)} rare relation ends linked to a core concept")
@@ -851,6 +855,7 @@ if __name__ == "__main__":
     # similarity a core concept needs to be offered as a candidate.
     parser.add_argument("--anchor_min_uses", type=int, default=3)
     parser.add_argument("--anchor_similarity", type=float, default=0.55)
+    parser.add_argument("--anchor_model", default="gpt-4.1")
     args = parser.parse_args()
     if args.stage == "fetch":
         stage_fetch()
@@ -858,4 +863,4 @@ if __name__ == "__main__":
         stage_build(args.model, args.chain_model)
     else:
         stage_normalize(args.model, args.similarity, args.out_dir, args.retranslate, args.anchor_min_uses,
-                        args.anchor_similarity)
+                        args.anchor_similarity, args.anchor_model)
