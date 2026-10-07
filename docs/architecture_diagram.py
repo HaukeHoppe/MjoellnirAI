@@ -92,17 +92,17 @@ def mid(b, side):
 
 ax.text(50, 149.3, "Capital Markets RAG  —  technical architecture", ha="center", fontsize=21,
         fontweight="bold", color=INK)
-ax.text(50, 146.4, "Open WebUI + a custom Pipelines server that answers questions about a creator's "
-        "capital-markets videos — only with what the videos actually say.", ha="center", fontsize=11.3, color=MUTED)
+ax.text(50, 146.4, "Open WebUI + a custom Pipelines server that explains capital-market cause → effect chains "
+        "— only with what its sources actually say.", ha="center", fontsize=11.3, color=MUTED)
 
 # ---------------------------------------------------------------------------
 # 0. Deployment (Docker)
 # ---------------------------------------------------------------------------
-section(141.5, "Deployment  (Docker Compose)", "two containers on one compose network  ·  OpenAI as external API", PLATFORM[1])
-frame(2, 106, 76, 33.5, "Docker host  (Windows · Docker Desktop)")
+section(141.5, "Deployment  (Docker Compose)", "Open WebUI + RAG engine on one compose network (Caddy in front on the VPS)  ·  OpenAI as external API", PLATFORM[1])
+frame(2, 106, 76, 33.5, "Docker host  (VPS; locally Docker Desktop)")
 frame(20.5, 119, 55.5, 17.5, "compose network  (default bridge)", color="#6b7280", dashed=True)
 
-browser = box(4, 124, 14.5, 10, "Browser", "user's chat", BROWSER, tech="localhost:3000")
+browser = box(4, 124, 14.5, 10, "Browser", "user's chat", BROWSER, tech="mjoelnir.ai via Caddy\nlocally :3000")
 webui = box(22.5, 120.5, 21.5, 13.5, "open-webui",
             "Chat UI, accounts, model list,\nbackground tasks (title, follow-ups)", PLATFORM,
             tech="image open-webui:v0.11.4\nport 3000 → 8080")
@@ -111,7 +111,7 @@ engine = box(51, 120.5, 23.5, 13.5, "pipelines-capital  (RAG engine)",
              tech="image pipelines (pinned digest)\nport 9099 (internal) · env OPENAI_API_KEY", size=9.4)
 v_data = box(22.5, 108, 15.5, 8.5, "open-webui-data/", "DB, uploads, settings", VOLUME,
              tech="→ /app/backend/data", size=9, dashed=True)
-v_data = box(40, 108, 17.5, 8.5, "data/", "index files + scripts", VOLUME,
+v_kb = box(40, 108, 17.5, 8.5, "data/", "index files + scripts", VOLUME,
              tech="→ /data  (both)", size=9, dashed=True)
 v_code = box(59.5, 108, 16.5, 8.5, "pipelines-capital/", "pipeline code + valves", VOLUME,
              tech="→ /app/pipelines", size=9, dashed=True)
@@ -119,7 +119,7 @@ v_env = box(4, 108, 14.5, 8.5, ".env", "git-ignored secrets", VOLUME,
             tech="OPENAI_API_KEY → engine", size=9, dashed=True)
 openai = box(81, 120.5, 17, 13.5, "OpenAI API",
              "embeddings and\nchat completions", EXTERNAL,
-             tech="text-embedding-3-large\ngpt-4o-mini · gpt-4o", size=9.4)
+             tech="text-embedding-3-large\ngpt-4.1 · 4.1-mini · 4o", size=9.4)
 
 arrow(mid(browser, "r"), mid(webui, "l"), "HTTP", dy=1.8)
 arrow(mid(webui, "r"), mid(engine, "l"), "OpenAI\nAPI\n(SSE)", both=True, dy=4.6, size=8.6)
@@ -135,12 +135,12 @@ ax.text(81, 116.4, "Connection set in Open WebUI:\nAdmin › Settings › Connec
 # ---------------------------------------------------------------------------
 # 1. Building the knowledge base
 # ---------------------------------------------------------------------------
-section(102, "1   Building the knowledge base", "offline, run once per corpus change:  ingest_capital_chunks.py", DATA[1])
+section(102, "1   Building the knowledge base", "offline, run once per corpus change:  build_public_kb.py → ingest_capital_chunks.py", DATA[1])
 W5, RY, RH = 18, 79.5, 19
 xs = [2, 21.5, 41, 60.5, 80]
-k_src = box(xs[0], RY, W5, RH, "Video transcripts",
-            "pre-cut passages with key\nconcepts, cause → effect\nrelations and example\nquestions", DATA,
-            tech="extracted_v2_all.json")
+k_src = box(xs[0], RY, W5, RH, "Public sources",
+            "Wikipedia sections, own\nexplanatory texts and\ncause → effect chain\ntexts, with concepts", DATA,
+            tech="build_public_kb.py\nextracted_v2_all.json")
 k_cls = box(xs[1], RY, W5, RH, "Content classifier",
             "labels passages as timeless\nconcept or time-bound\nopinion; relations as\ntimeless / time-bound", DATA,
             tech="gpt-4o-mini · structured\ncached by content hash")
@@ -148,20 +148,20 @@ k_vec = box(xs[2], RY, W5, RH, "Multi-vector indexing",
             "each passage stored under\nits text AND under the\nquestions it answers", DATA,
             tech="HyPE · ~10 vectors/chunk\ntext-embedding-3-large")
 k_sum = box(xs[3], RY, W5, RH, "Concept summaries",
-            "same idea from several\nvideos merged into one\nsummary, sources only;\nopinions never merged", DATA,
-            tech="RAPTOR-style · agglomerative\ncosine ≥ 0.73 · ≥ 2 videos")
+            "same idea from several\nsources merged into one\nsummary, sources only;\nopinions never merged", DATA,
+            tech="RAPTOR-style · agglomerative\ncosine ≥ 0.73 · ≥ 2 sources")
 k_graph = box(xs[4], RY, W5, RH, "Knowledge graph",
               "concepts linked by their\ncause → effect relations,\nwith the passages that\nstate each link", DATA,
               tech="nodes: concepts\nedges: source → target")
 for a, b in zip([k_src, k_cls, k_vec, k_sum], [k_cls, k_vec, k_sum, k_graph]):
     arrow(mid(a, "r"), mid(b, "l"))
 
-frame(2, 60, 96, 16, "Knowledge base   (files in data/faiss_capital_index/, loaded into the RAG engine at startup)",
+frame(2, 60, 96, 16, "Knowledge base   (files in data/faiss_public_index/, loaded into the RAG engine at startup)",
       color=STORE[1], dashed=True, fill="#f7fee7", label_bottom=True)
 SW, SY, SH = 21, 63.6, 10.2
 s_sem = box(4, SY, SW, SH, "Vector index", "finds passages by meaning", STORE, tech="FAISS · cosine similarity", size=9.3)
 s_kw = box(27.5, SY, SW, SH, "Keyword index", "exact terms, names, tickers", STORE, tech="BM25 · DE + EN stopwords", size=9.3)
-s_sum = box(51, SY, SW, SH, "Summaries", "cross-video explanations", STORE, tech="in FAISS + summaries.json", size=9.3)
+s_sum = box(51, SY, SW, SH, "Summaries", "cross-source explanations", STORE, tech="in FAISS + summaries.json", size=9.3)
 s_graph = box(74.5, SY, SW, SH, "Concept graph", "cause → effect links", STORE, tech="graph.json", size=9.3)
 arrow(mid(k_vec, "b"), (20, SY + SH))
 arrow(mid(k_vec, "b"), (40, SY + SH))
@@ -178,15 +178,15 @@ a_q = box(xs[0], AY, W5, AH, "Question", "asked in the chat;\nOpen WebUI backgro
 a_search = box(xs[1], AY, W5, AH, "Hybrid search",
                "meaning + keyword search\nmerged into one ranking", SEARCH,
                tech="FAISS 40 + BM25 40\n0.6·dense + 0.4·bm25 → 12")
-a_graph = box(xs[2], AY, W5, AH, "Graph expansion",
-              "adds passages stating the\nsame cause → effect,\noften from other videos", SEARCH,
-              tech="relations of top 3 → +≤ 4")
+a_graph = box(xs[2], AY, W5, AH, "Graph + chain search",
+              "adds passages stating the\nsame cause → effect and\nsteps of causal paths", SEARCH,
+              tech="top 3 relations → +≤ 4\npaths of ≤ 4 steps")
 a_judge = box(xs[3], AY, W5, AH, "Relevance judge",
               "keeps only passages that\nreally answer THIS question", CHECK,
-              tech="gpt-4o-mini · structured\nrelevance ≥ 6/10 → top 5")
+              tech="gpt-4.1-mini · ≥ 6/10 → 6\nchain steps ≥ 4/10 → +6")
 a_write = box(xs[4], AY, W5, AH, "Answer writer",
-              "context only, cites [n],\nnames the video for\nevery opinion", LLM,
-              tech="gpt-4o-mini · temp 0\nnot streamed yet")
+              "context only, cites [n],\nnumbered chain steps,\nnames opinion sources", LLM,
+              tech="gpt-4.1 · temp 0\nnot streamed yet")
 for a, b in zip([a_q, a_search, a_graph, a_judge], [a_search, a_graph, a_judge, a_write]):
     arrow(mid(a, "r"), mid(b, "l"))
 arrow((30.5, 60), mid(a_search, "t"), "reads", style="dashed", color=STORE[1], dx=3.5)
@@ -195,7 +195,7 @@ arrow((50, 60), mid(a_graph, "t"), "reads", style="dashed", color=STORE[1], dx=3
 BY, BH = 18.5, 15.5
 a_check = box(80, BY, 18, BH, "Fact checker",
               "single claims, each needs a\nword-for-word quote with\nthe same cause & certainty", CHECK,
-              tech="gpt-4o + Python rules\nquote · cause · video", size=9.5)
+              tech="gpt-4o + Python rules\nquote · cause · source", size=9.5)
 a_fix = box(58, BY, 17, BH, "Fixer",
             "removes or corrects\nunproven claims,\nthen re-checks", CHECK,
             tech="gpt-4o · ≤ 2 rounds\nthen trim sentences")
@@ -210,7 +210,7 @@ arrow((62.5, AY), (47, BY + BH), "nothing relevant / check fails", pos=0.5, dy=0
 
 CY = 1
 a_ok = box(58, CY, 40, 14, "Verified answer  ✓",
-           "shown with only the cited sources (concept / opinion + why used)\n"
+           "shown with the cited sources (more per step after a verified quote)\n"
            "and follow-up questions that were checked to be answerable", OK,
            tech="status events while working · follow-up chips")
 arrow(mid(a_check, "b"), (89, CY + 14), "all claims proven ✓", dx=-6.5)
@@ -220,10 +220,10 @@ ax.add_patch(FancyBboxPatch((2, 1), 31, 33, boxstyle="round,pad=0,rounding_size=
                             facecolor="#f9fafb", edgecolor="#9ca3af", linewidth=1.6))
 ax.text(4, 31.4, "Design principles", fontsize=12.5, fontweight="bold", color=INK, va="center")
 principles = [
-    "Answer only from the videos —\nno general textbook knowledge",
+    "Answer only from the sources —\nno general textbook knowledge",
     "Every claim is proven by a\nword-for-word quote (checked in code)",
     "Keep the source's cause and certainty\n(\"could\" never becomes \"always\")",
-    "Opinions are time-bound: always\nname the video they come from",
+    "Opinions are time-bound: always\nname the source they come from",
     "Conflicting views are shown side\nby side, never blended",
     "Fail closed: no proof, no answer —\nsuggest related topics instead",
 ]
