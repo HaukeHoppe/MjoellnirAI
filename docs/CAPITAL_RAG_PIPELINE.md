@@ -72,8 +72,7 @@ flowchart LR
 - The **index is not built in the container at startup.** It is created once, offline, by
   `ingest_capital_chunks.py` and read from `/data/faiss_capital_index`.
 - `OPENAI_API_KEY` comes from `.env` through `${OPENAI_API_KEY}` in the compose file.
-- Open WebUI's `PIPELINES_URL` points only at the climate pipelines server. **You have to add the capital
-  server as a second connection yourself**: *Admin Panel → Settings → Connections → OpenAI API → +*
+- **Add the pipelines server as a connection in Open WebUI yourself**: *Admin Panel → Settings → Connections → OpenAI API → +*
   with URL `http://pipelines-capital:9099` and the Pipelines API key (`PIPELINES_API_KEY` from `.env`). The pipelines
   ports are not published on the host, since the key allows uploading and running Python code.
 - In the model picker, the model appears as **"Capital Markets RAG"** with model id

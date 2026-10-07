@@ -322,7 +322,6 @@ docker compose up -d   # recreates the containers with the new log driver; docke
 ```
 
 > Volume paths in `docker-compose.yaml` are relative to the project folder, so run `docker compose` from there.
-> The compose file also starts a separate climate test pipeline; it is not part of this documentation.
 
 ---
 
