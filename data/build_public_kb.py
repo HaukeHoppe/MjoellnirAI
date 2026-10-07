@@ -18,7 +18,7 @@ Builds the public knowledge base for the Capital Markets RAG pipeline from sourc
 Unchanged chunks are taken over from the previous build, so a rebuild only pays for new material.
 
 Output is the chunk format of extracted_v2_all.json, so ingest_capital_chunks.py builds the index
-unchanged. Run inside the capital pipelines container (/data = ./pdfs):
+unchanged. Run inside the capital pipelines container (/data = ./data):
 
     docker exec open-webui-pipelines-capital python /data/build_public_kb.py --stage fetch
     # check /data/faiss_public_index/wiki_resolved.json (topic -> article), then:

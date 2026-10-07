@@ -25,7 +25,7 @@ services:
       - "127.0.0.1:3000:8080"
 
     volumes:
-      - ./pdfs:/data
+      - ./data:/data
       - ./open-webui-data:/app/backend/data
 
     environment:
@@ -73,7 +73,7 @@ services:
     # compose network. Anyone holding the API key can upload and run Python code here.
 
     volumes:
-      - ./pdfs:/data
+      - ./data:/data
       - ./pipelines-capital:/app/pipelines
 
     environment:

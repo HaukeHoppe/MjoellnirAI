@@ -54,7 +54,7 @@ flowchart LR
 |-----------|------------|
 | `open-webui` (port 3000) | Chat UI. The pipeline appears in the model picker as **Capital Markets RAG** |
 | `pipelines-capital` (internal port 9099, not published) | Open WebUI Pipelines server that loads [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) at startup |
-| `pdfs/faiss_capital_index/` | Index built offline by [`pdfs/ingest_capital_chunks.py`](pdfs/ingest_capital_chunks.py), mounted at `/data` (git-ignored) |
+| `data/faiss_capital_index/` | Index built offline by [`data/ingest_capital_chunks.py`](data/ingest_capital_chunks.py), mounted at `/data` (git-ignored) |
 | OpenAI | `text-embedding-3-large` for embeddings; `gpt-4o-mini` for grading and answering; `gpt-4o` for checking and revising |
 
 The expensive reasoning about the corpus (classification, clustering, summaries, graph) is done **once at
@@ -107,9 +107,9 @@ The output lists **only the sources the answer actually cites**, each marked *Ko
 
 ## Ingestion: preparing the data
 
-The public site answers from `pdfs/faiss_public_index/` (the pipeline's default `INDEX_DIR`): German Wikipedia
+The public site answers from `data/faiss_public_index/` (the pipeline's default `INDEX_DIR`): German Wikipedia
 articles (CC BY-SA 4.0), own explanatory texts and own cause -> effect chains (how a shock propagates step by step,
-written by gpt-4.1), built by [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py). The `normalize` stage maps all
+written by gpt-4.1), built by [`data/build_public_kb.py`](data/build_public_kb.py). The `normalize` stage maps all
 concept names to canonical English names, so the concept graph links chunks of different sources for the chain search.
 Use only sources you have the rights to publish; the private `faiss_capital_index` stays selectable via `INDEX_DIR`.
 
@@ -126,13 +126,13 @@ docker exec open-webui-pipelines-capital python /data/generate_start_suggestions
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/faiss_public_index/start_suggestions.json
 #    or the three hand-picked questions shown on the public site (checked against the pipeline):
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/start_suggestions_public.json
-cp pdfs/faiss_public_index/lizenzen.html legal/lizenzen.html
+cp data/faiss_public_index/lizenzen.html legal/lizenzen.html
 docker restart open-webui-pipelines-capital
 ```
 
 `build_public_kb.py` writes the chunk format of `extracted_v2_all.json` (`title`, `content`, `embedding_text`,
 `hypothetical_questions`, `concepts`, `relations`, `sources`, ...) plus `lizenzen.html`, the attribution page Caddy
-serves at `/lizenzen` (linked in the footer), as CC BY-SA requires. [`pdfs/eval_chains.py`](pdfs/eval_chains.py)
+serves at `/lizenzen` (linked in the footer), as CC BY-SA requires. [`data/eval_chains.py`](data/eval_chains.py)
 measures chain answers (15 fixed questions, LLM-judged steps / completeness / refusals) before and after a change. OpenAI limits gpt-4o-mini to 10,000 requests per
 day on lower tiers, which the chat shares; pass `--llm_model` / `--model` to use another model's quota for a rebuild.
 
@@ -247,8 +247,8 @@ Instead of a dead end, the pipeline suggests topics the videos **do** cover:
 Suggestions appear in the reply after a refusal and as clickable follow-up chips. After a normal answer, the pipeline
 handles Open WebUI's follow-up background task itself, so the chips come from the data instead of being invented
 by the model. Start-page suggestions are verified the same way
-([`generate_start_suggestions.py`](pdfs/generate_start_suggestions.py) →
-[`apply_start_suggestions.py`](pdfs/apply_start_suggestions.py)).
+([`generate_start_suggestions.py`](data/generate_start_suggestions.py) →
+[`apply_start_suggestions.py`](data/apply_start_suggestions.py)).
 
 ---
 
@@ -258,7 +258,7 @@ by the model. Start-page suggestions are verified the same way
 cp .env.example .env                 # set OPENAI_API_KEY, PIPELINES_API_KEY, WEBUI_SECRET_KEY
 docker compose up -d --build
 
-# put extracted_v2_all.json into pdfs/faiss_capital_index/, then:
+# put extracted_v2_all.json into data/faiss_capital_index/, then:
 docker exec -it open-webui-pipelines-capital python /data/ingest_capital_chunks.py
 docker restart open-webui-pipelines-capital
 ```
@@ -282,7 +282,7 @@ certificate and forwards to Open WebUI on the internal network ([`Caddyfile`](Ca
 1. Point the domain's DNS A/AAAA record at the VPS; open ports 22, 80 and 443 in the firewall.
 2. In `.env` set `WEBUI_URL=https://your.domain`, `CORS_ALLOW_ORIGIN=https://your.domain` (no trailing slash),
    `ACME_EMAIL=<real address>` and `COMPOSE_PROFILES=vps`.
-3. Copy `pdfs/faiss_capital_index/` (and optionally `open-webui-data/`) to the VPS, then run `docker compose up -d --build`.
+3. Copy `data/faiss_capital_index/` (and optionally `open-webui-data/`) to the VPS, then run `docker compose up -d --build`.
 
 **Open access without login (optional).** Caddy can sign every visitor in automatically as one shared guest
 account with role `user` (no admin rights; guests share its chat history), while the admin account is only
@@ -368,10 +368,10 @@ When an answer is missing, find which stage is responsible:
 | Path | Contents |
 |------|----------|
 | [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) | The query-time pipeline |
-| [`pdfs/ingest_capital_chunks.py`](pdfs/ingest_capital_chunks.py) | Offline ingestion (classification, embedding, summaries, graph) |
-| [`pdfs/generate_start_suggestions.py`](pdfs/generate_start_suggestions.py), [`pdfs/apply_start_suggestions.py`](pdfs/apply_start_suggestions.py) | Verified start-page questions |
-| [`pdfs/build_public_kb.py`](pdfs/build_public_kb.py) | Builds the public knowledge base (Wikipedia + own texts) and the licence page |
-| `pdfs/faiss_public_index/`, `pdfs/faiss_capital_index/` | Generated indexes and caches (git-ignored) |
+| [`data/ingest_capital_chunks.py`](data/ingest_capital_chunks.py) | Offline ingestion (classification, embedding, summaries, graph) |
+| [`data/generate_start_suggestions.py`](data/generate_start_suggestions.py), [`data/apply_start_suggestions.py`](data/apply_start_suggestions.py) | Verified start-page questions |
+| [`data/build_public_kb.py`](data/build_public_kb.py) | Builds the public knowledge base (Wikipedia + own texts) and the licence page |
+| `data/faiss_public_index/`, `data/faiss_capital_index/` | Generated indexes and caches (git-ignored) |
 | [`legal/`](legal/) | Impressum, Datenschutzerklärung, Lizenzen (served by Caddy) |
 | `all_rag_techniques_runnable_scripts/` | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …); third-party code, kept locally, not in the repository |
 | [`docs/`](docs/) | Detailed documentation |

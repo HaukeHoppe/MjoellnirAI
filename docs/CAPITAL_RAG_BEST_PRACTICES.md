@@ -74,7 +74,7 @@ flowchart TB
             CL[checker / reviser<br/>gpt-4o]
         end
     end
-    subgraph Disk: pdfs/faiss_capital_index
+    subgraph Disk: data/faiss_capital_index
         F1[(index.faiss / index.pkl)]
         F2[(graph.json)]
     end
@@ -102,7 +102,7 @@ flowchart TB
 | Deterministic verifiers | `quote_in_context` (`:209`), `joins_sentences` (`:230`), `required_videos` (`:256`), `paragraph_of` (`:269`), `names_video` (`:303`), `drop_sentences` (`:282`) |
 | Explorer / follow-ups | `_explore` (`:576`), `_follow_ups` (`:677`), `same_question` (`:334`) |
 | Orchestration, status events | `pipe` (`:774`) |
-| Ingestion | `classify_chunks` (`pdfs/ingest_capital_chunks.py:114`), `classify_relations` (`:173`), `build_summaries` (`:232`), `build_graph` (`:332`), `main` (`:368`) |
+| Ingestion | `classify_chunks` (`data/ingest_capital_chunks.py:114`), `classify_relations` (`:173`), `build_summaries` (`:232`), `build_graph` (`:332`), `main` (`:368`) |
 
 ### 2.3 Separation of offline and online work
 
@@ -484,7 +484,7 @@ domains, and kept only if the grader confirms the summary answers them.
 | Background tasks routed separately | `### Task:` handling in `pipe` | Title and tag requests skip retrieval |
 | Strip echoed "Answer:" labels after revision | regex in `_grounded_answer` | Clean output |
 | Secrets via env only | `${OPENAI_API_KEY}` in compose, `.env` git-ignored | Nothing sensitive in the repo |
-| Generated artifacts git-ignored | `pdfs/faiss_capital_index/`, `*.faiss`, `*.pkl` | Reproducible from source, no binaries in git |
+| Generated artifacts git-ignored | `data/faiss_capital_index/`, `*.faiss`, `*.pkl` | Reproducible from source, no binaries in git |
 
 ---
 

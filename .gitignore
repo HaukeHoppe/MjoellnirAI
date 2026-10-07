@@ -16,10 +16,10 @@ all_rag_techniques_runnable_scripts/
 open-webui-data/
 
 # ---- Generated vector indexes and extracted corpora ----------------------
-pdfs/faiss_capital_index/
-pdfs/faiss_public_index/
+data/faiss_capital_index/
+data/faiss_public_index/
 # eval_chains.py results (answers and scores of a run)
-pdfs/eval_*.json
+data/eval_*.json
 *.faiss
 *.pkl
 
