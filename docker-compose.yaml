@@ -47,47 +47,18 @@ services:
       # Only these origins may call the API and open the chat websocket (default '*' = any website).
       # Must match the browser address exactly: scheme + host, no trailing slash; separate several with ';'.
       - CORS_ALLOW_ORIGIN=${CORS_ALLOW_ORIGIN:-http://localhost:3000}
-      - PIPELINES_URL=http://pipelines:9099
 
     restart: always
     logging: *logging
 
     depends_on:
-      - pipelines
       - pipelines-capital
 
 
   # =====================================================
-  # Open WebUI Pipelines
-  # =====================================================
-
-  pipelines:
-    build:
-      context: .
-      dockerfile: Dockerfile.pipelines
-
-    container_name: open-webui-pipelines
-
-    # No published ports: Open WebUI reaches the pipelines servers over the internal
-    # compose network. Anyone holding the API key can upload and run Python code here.
-
-    volumes:
-      - ./pdfs:/data
-
-    environment: &pipelines_env
-      # Pipeline print() output (e.g. rejected claims) shows up in docker logs immediately.
-      - PYTHONUNBUFFERED=1
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - PIPELINES_API_KEY=${PIPELINES_API_KEY:?set PIPELINES_API_KEY in .env}
-
-    restart: always
-    logging: *logging
-
-
-  # =====================================================
-  # Open WebUI Pipelines #2 - Capital Markets RAG
+  # Open WebUI Pipelines - Capital Markets RAG
   # Loads pipelines-capital/capital_rag_pipeline.py on startup.
-  # Add in Open WebUI as a second connection:
+  # Add in Open WebUI (Admin Panel -> Settings -> Connections) as an OpenAI API connection:
   #   http://pipelines-capital:9099  (key: PIPELINES_API_KEY from .env)
   # =====================================================
 
@@ -98,11 +69,18 @@ services:
 
     container_name: open-webui-pipelines-capital
 
+    # No published ports: Open WebUI reaches the pipelines server over the internal
+    # compose network. Anyone holding the API key can upload and run Python code here.
+
     volumes:
       - ./pdfs:/data
       - ./pipelines-capital:/app/pipelines
 
-    environment: *pipelines_env
+    environment:
+      # Pipeline print() output (e.g. rejected claims) shows up in docker logs immediately.
+      - PYTHONUNBUFFERED=1
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PIPELINES_API_KEY=${PIPELINES_API_KEY:?set PIPELINES_API_KEY in .env}
 
     restart: always
     logging: *logging

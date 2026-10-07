@@ -6,18 +6,16 @@
 .webui_secret_key
 
 # ---- Local only: not part of the repository ------------------------------
-# Assistant instructions and hooks, the change log, third-party reference scripts and the climate test PDF.
+# Assistant instructions and hooks, the change log and third-party reference scripts.
 CLAUDE.md
 .claude/
 CHANGELOG.md
 all_rag_techniques_runnable_scripts/
-pdfs/Understanding_Climate_Change.pdf
 
 # ---- Open WebUI runtime data (database, uploads, vector DB, model cache) --
 open-webui-data/
 
 # ---- Generated vector indexes and extracted corpora ----------------------
-pdfs/faiss_climate_index/
 pdfs/faiss_capital_index/
 pdfs/faiss_public_index/
 # eval_chains.py results (answers and scores of a run)

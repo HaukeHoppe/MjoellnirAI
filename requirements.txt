@@ -6,6 +6,5 @@ pydantic
 openai
 aiohttp>=3.10
 rank-bm25
-PyMuPDF
 numpy
 faiss-cpu
