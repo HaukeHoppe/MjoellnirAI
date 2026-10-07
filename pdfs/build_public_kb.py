@@ -11,9 +11,9 @@ Builds the public knowledge base for the Capital Markets RAG pipeline from sourc
    (trigger, numbered steps, conditions, counter-effects), one relation per step. These carry the
    multi-step links that encyclopedia articles rarely state.
 4. Concept normalization: every concept name (chunk concepts and relation ends) is mapped to one canonical
-   English name, and rarely used relation ends are linked to a core concept that means the same or is its
-   general form, so the concept graph connects chunks from different sources and chains can be followed
-   across them.
+   English name, so the concept graph connects chunks from different sources and chains can be followed
+   across them. Optionally (--anchor_min_uses), rarely used relation ends are linked to a core concept that
+   means the same or is its general form.
 
 Unchanged chunks are taken over from the previous build, so a rebuild only pays for new material.
 
@@ -852,8 +852,10 @@ if __name__ == "__main__":
     # normalize: map names cached as their own canonical name again (repairs untranslated German names).
     parser.add_argument("--retranslate", action="store_true")
     # normalize: relation ends used fewer times are linked to a core concept (0 = off), and the cosine
-    # similarity a core concept needs to be offered as a candidate.
-    parser.add_argument("--anchor_min_uses", type=int, default=3)
+    # similarity a core concept needs to be offered as a candidate. Off by default: with 3 the chain search found
+    # paths for 17/35 eval questions instead of 5/35, but the answers did not improve (validation set: 9/20
+    # complete chains instead of 10/20, 3 refusals instead of 1), so the extra paths are not worth wrong links.
+    parser.add_argument("--anchor_min_uses", type=int, default=0)
     parser.add_argument("--anchor_similarity", type=float, default=0.55)
     parser.add_argument("--anchor_model", default="gpt-4.1")
     args = parser.parse_args()
