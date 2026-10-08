@@ -142,7 +142,7 @@ docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py -
 #    or the three hand-picked questions shown on the public site (checked against the pipeline), with the
 #    repository link Open WebUI shows under the model name:
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/start_suggestions_public.json \
-  --description "[github.com/HaukeHoppe/MjoellnirAI](https://github.com/HaukeHoppe/MjoellnirAI)"
+  --description "[github.com/HaukeHoppe/MjoelnirAI](https://github.com/HaukeHoppe/MjoelnirAI)"
 cp data/faiss_public_index/lizenzen.html legal/lizenzen.html
 docker restart open-webui-pipelines-capital
 ```
