@@ -35,6 +35,7 @@ private corpus, such as transcribed videos (`faiss_capital_index`).
 - [Hallucination defenses](#hallucination-defenses)
 - [Fallbacks](#fallbacks)
 - [Explorer mode](#explorer-mode)
+- [Graph explorer (TypeScript)](#graph-explorer-typescript)
 - [Setup](#setup)
 - [Configuration](#configuration)
 - [Debugging](#debugging)
@@ -274,6 +275,43 @@ by the model. Start-page suggestions are verified the same way
 
 ---
 
+## Graph explorer (TypeScript)
+
+[`graph-explorer/`](graph-explorer/) is a browser page that makes the concept graph behind the chain search visible:
+pick a cause and an effect and it shows the cause → effect chains between them (at most 4 steps), the net direction
+of each chain, and for every step the sentence from the sources that states it, with a link to the source.
+"Im Chat fragen" opens the chat with the chain as a question. Without a chain it offers the effects of the cause
+and the causes of the effect as next choices. Locally it runs at http://localhost:3001, on the VPS at `/graph/`.
+
+```mermaid
+flowchart LR
+    IDX[(data/faiss_public_index/<br/>graph.json, chunks,<br/>concept_map, attribution)] -->|export_explorer_graph.py| EX[(data/explorer/graph.json)]
+    EX -->|read-only mount| GE[graph-explorer container<br/>Caddy, static page]
+    GE -->|Browser: TypeScript app| UI[chain search,<br/>d3-force graph]
+    UI -->|"Im Chat fragen"<br/>?models=…&q=…| OW[Open WebUI]
+```
+
+- **Data:** [`data/export_explorer_graph.py`](data/export_explorer_graph.py) writes `data/explorer/graph.json`
+  (git-ignored): concepts with a German label, every relation with its evidence, and title, source and Wikipedia link
+  of each evidence chunk. It only exports the public index, because the file is published.
+- **Chain search** ([`src/graph.ts`](graph-explorer/src/graph.ts)): a backward BFS gives every concept its distance to
+  the effect, then a depth-first search enumerates simple paths that can still reach it in the steps left, shortest
+  and best supported first. The direction of a chain is the product of its step signs (more → less → less = more).
+- **Code:** strict TypeScript, no UI framework; `src/parse.ts` validates `graph.json` at runtime and names the
+  offending field, `src/view.ts` draws with d3-force, `src/main.ts` holds the UI state (mirrored in the URL hash).
+  The Docker build runs the type check and the unit tests ([`src/graph.test.ts`](graph-explorer/src/graph.test.ts)).
+
+```sh
+python data/export_explorer_graph.py               # after every ingestion
+docker compose up -d --build graph-explorer         # http://localhost:3001
+
+cd graph-explorer && npm install
+npm run dev                                         # dev server, reads ../data/explorer/graph.json
+npm test                                            # unit tests (vitest)
+```
+
+---
+
 ## Setup
 
 ```sh
@@ -298,6 +336,8 @@ certificate and forwards to Open WebUI on the internal network ([`Caddyfile`](Ca
    `ACME_EMAIL=<real address>` and `COMPOSE_PROFILES=vps`.
 3. Copy the project folder to the VPS (without `.env`, which is created there), run `docker compose up -d --build`,
    then build the index there or copy `data/faiss_public_index/` along (and optionally `open-webui-data/`).
+4. Graph explorer: set `GRAPH_CHAT_URL=/` in `.env`, run `python data/export_explorer_graph.py` (or copy
+   `data/explorer/` along) and `docker compose up -d graph-explorer`; Caddy serves it at `/graph/`.
 
 **Open access without login (optional).** Caddy can sign every visitor in automatically as one shared guest
 account with role `user` (no admin rights; guests share its chat history), while the admin account is only
@@ -389,7 +429,9 @@ When an answer is missing, find which stage is responsible:
 | [`data/ingest_capital_chunks.py`](data/ingest_capital_chunks.py) | Offline ingestion (classification, embedding, summaries, graph) |
 | [`data/generate_start_suggestions.py`](data/generate_start_suggestions.py), [`data/apply_start_suggestions.py`](data/apply_start_suggestions.py) | Verified start-page questions |
 | [`data/build_public_kb.py`](data/build_public_kb.py) | Builds the public knowledge base (Wikipedia + own texts) and the licence page |
+| [`data/export_explorer_graph.py`](data/export_explorer_graph.py) | Exports the concept graph for the graph explorer to `data/explorer/` (git-ignored) |
 | `data/faiss_public_index/`, `data/faiss_capital_index/` | Generated indexes and caches (git-ignored) |
+| [`graph-explorer/`](graph-explorer/) | Graph explorer: TypeScript app, its tests, Dockerfile and Caddyfile |
 | [`legal/`](legal/) | Impressum, Datenschutzerklärung, Lizenzen (served by Caddy) |
 | `all_rag_techniques_runnable_scripts/` | Reference RAG techniques the pipeline is adapted from (HyPE, fusion, RAPTOR, reranking, graph RAG, …); third-party code, kept locally, not in the repository |
 | [`docs/`](docs/) | Detailed documentation |
