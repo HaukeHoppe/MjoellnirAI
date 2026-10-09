@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="description" content="Ursache-Wirkungs-Ketten am Kapitalmarkt, aus den Quellen der Capital Markets RAG" />
+    <title>Wirkungsketten-Explorer</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <strong>Wirkungsketten-Explorer</strong>
+        <span class="muted" id="stats"></span>
+      </div>
+      <a class="button ghost" id="chat-link" href="/">Zum Chat</a>
+    </header>
+
+    <main class="layout">
+      <aside class="panel" aria-label="Kettensuche">
+        <form id="chain-form" class="chain-form" autocomplete="off">
+          <label class="field">
+            <span>Ursache</span>
+            <div class="picker">
+              <input id="from" type="text" placeholder="z. B. Leitzins, Ölpreis …" role="combobox" aria-expanded="false" aria-controls="from-list" />
+              <ul id="from-list" class="suggestions" role="listbox" hidden></ul>
+            </div>
+          </label>
+          <button type="button" class="icon-button" id="swap" title="Ursache und Wirkung tauschen" aria-label="Ursache und Wirkung tauschen">⇅</button>
+          <label class="field">
+            <span>Wirkung</span>
+            <div class="picker">
+              <input id="to" type="text" placeholder="z. B. Inflation, Anleihekurs …" role="combobox" aria-expanded="false" aria-controls="to-list" />
+              <ul id="to-list" class="suggestions" role="listbox" hidden></ul>
+            </div>
+          </label>
+          <button type="submit" class="button">Kette suchen</button>
+        </form>
+
+        <section id="results" class="results" aria-live="polite"></section>
+      </aside>
+
+      <section class="canvas" aria-label="Konzeptgraph">
+        <svg id="graph" role="img" aria-label="Netz aus Ursachen und Wirkungen"></svg>
+        <div class="legend">
+          <span><i class="swatch positive"></i>fördert (mehr → mehr)</span>
+          <span><i class="swatch negative"></i>dämpft (mehr → weniger)</span>
+          <span><i class="swatch ambiguous"></i>uneindeutig</span>
+        </div>
+        <p class="hint muted">Ziehen zum Verschieben, Mausrad zum Zoomen, Klick auf ein Konzept für Details.</p>
+      </section>
+    </main>
+
+    <footer class="footer muted">
+      <span>Inhalte aus der deutschsprachigen Wikipedia (<a href="https://creativecommons.org/licenses/by-sa/4.0/deed.de" rel="license noopener" target="_blank">CC BY-SA 4.0</a>) und eigenen Texten. Keine Anlageberatung.</span>
+      <span><a data-legal href="impressum">Impressum</a> · <a data-legal href="datenschutz">Datenschutz</a> · <a data-legal href="lizenzen">Lizenzen</a></span>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
