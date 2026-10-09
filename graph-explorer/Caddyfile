@@ -1,0 +1,25 @@
+# Static server for the built explorer (graph-explorer container, port 8080).
+# /data/graph.json comes from the ./data/explorer bind mount (export_explorer_graph.py).
+# /config.json tells the page where the chat is: CHAT_URL from docker-compose.yaml
+# (http://localhost:3000/ locally, / on the VPS where Caddy serves the explorer at /graph/).
+{
+	admin off
+}
+
+:8080 {
+	encode zstd gzip
+
+	# The export changes after every ingestion: browsers revalidate it instead of keeping an old copy.
+	header /data/* Cache-Control "no-cache"
+
+	handle /config.json {
+		header Content-Type application/json
+		header Cache-Control "no-cache"
+		respond `{"chatUrl":"{$CHAT_URL}"}` 200
+	}
+
+	handle {
+		root * /srv
+		file_server
+	}
+}
