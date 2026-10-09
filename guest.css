@@ -59,10 +59,10 @@ div:has(> button[aria-expanded="true"] + div.flex-row > div.w-full) > button[ari
 	display: none !important;
 }
 
-/* Graph explorer link in the model description under the title (apply_start_suggestions.py --description):
-   shown as a button, so visitors see that the chains can be explored visually. The description is clamped to two
-   lines, so the button stays on one short line. */
-.markdown a[href="/graph/"] {
+/* Graph explorer link in the model description, in the line under the GitHub link (apply_start_suggestions.py
+   --description): shown as a button, so visitors see that the chains can be explored visually. The description is
+   clamped to two lines, so the button stays on one short line. It opens an example chain (/graph/#von=…&nach=…). */
+.markdown a[href^="/graph/"] {
 	display: inline-block;
 	margin: 4px 0 2px;
 	padding: 4px 14px;
@@ -74,6 +74,6 @@ div:has(> button[aria-expanded="true"] + div.flex-row > div.w-full) > button[ari
 	box-shadow: 0 1px 6px rgb(47 91 211 / 0.35);
 }
 
-.markdown a[href="/graph/"]:hover {
+.markdown a[href^="/graph/"]:hover {
 	background: #2448aa;
 }
