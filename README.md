@@ -21,6 +21,11 @@ private corpus, such as transcribed videos (`faiss_capital_index`).
 - 🕸️ **Makes the chains visible:** a TypeScript [graph explorer](#graph-explorer-typescript) finds the cause → effect
   chains between two concepts, shows the source sentence of every step and hands the chain to the chat as a question
 
+[![Graph explorer: three chains from Leitzins to Kurs einer Anleihe, the selected one drawn left to right](docs/graph-explorer.png)](https://mjoelnir.ai/graph/#von=Leitzins&nach=Bond+Price)
+
+<sub>The [graph explorer](https://mjoelnir.ai/graph/#von=Leitzins&nach=Bond+Price) live: chains from Leitzins (key rate) to
+Kurs einer Anleihe (bond price). Click the image to open it.</sub>
+
 > **Deep-dive documentation**
 > - [`docs/CAPITAL_RAG_PIPELINE.md`](docs/CAPITAL_RAG_PIPELINE.md): full reference (ingestion, workflow, fallbacks,
 >   valves, operations, cost)
@@ -294,8 +299,6 @@ of each chain, and for every step the sentence from the sources that states it, 
 and the causes of the effect as next choices. Locally it runs at http://localhost:3001, on the VPS at `/graph/`
 ([example: Leitzins → Kurs einer Anleihe](https://mjoelnir.ai/graph/#von=Leitzins&nach=Bond+Price)); the start page of
 the chat links it under the model name.
-
-![Graph explorer: three chains from Leitzins to Kurs einer Anleihe, the selected one drawn left to right](docs/graph-explorer.png)
 
 ```mermaid
 flowchart LR
