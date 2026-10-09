@@ -18,6 +18,8 @@ open-webui-data/
 # ---- Generated vector indexes and extracted corpora ----------------------
 data/faiss_capital_index/
 data/faiss_public_index/
+# export_explorer_graph.py output, served by the graph-explorer container
+data/explorer/
 # eval_chains.py results (answers and scores of a run)
 data/eval_*.json
 *.faiss
