@@ -2,7 +2,8 @@
 
 A retrieval-augmented chat model for [Open WebUI](https://github.com/open-webui/open-webui) that explains
 **cause → effect chains on the capital markets** (how a rate decision, an oil shock or a crash propagates through
-markets, step by step) **only from what its sources actually say**. It runs publicly at https://mjoelnir.ai.
+markets, step by step) **only from what its sources actually say**. It runs publicly at https://mjoelnir.ai, with a
+[graph explorer](https://mjoelnir.ai/graph/#von=Leitzins&nach=Bond+Price) that shows the chains in the concept graph.
 
 The public knowledge base consists of German Wikipedia articles (CC BY-SA 4.0), own explanatory texts and own
 cause → effect chain texts (see [Ingestion](#ingestion-preparing-the-data)). The same pipeline can also run on a
@@ -17,6 +18,8 @@ private corpus, such as transcribed videos (`faiss_capital_index`).
 - 🕰️ **Knows what goes stale:** timeless concepts are kept apart from time-bound opinions, and every opinion names the
   source it came from
 - 🚫 **Refuses instead of guessing,** then suggests related topics it *can* answer
+- 🕸️ **Makes the chains visible:** a TypeScript [graph explorer](#graph-explorer-typescript) finds the cause → effect
+  chains between two concepts, shows the source sentence of every step and hands the chain to the chat as a question
 
 > **Deep-dive documentation**
 > - [`docs/CAPITAL_RAG_PIPELINE.md`](docs/CAPITAL_RAG_PIPELINE.md): full reference (ingestion, workflow, fallbacks,
@@ -57,12 +60,16 @@ flowchart LR
     OW -->|OpenAI-compatible<br/>chat request| PC[pipelines-capital<br/>container<br/>capital_rag_pipeline.py]
     PC -->|embeddings, LLM calls| OA[(OpenAI API)]
     PC --- IDX[(data/faiss_public_index/<br/>FAISS index, graph.json,<br/>summaries.json)]
+    CA -->|/graph/| GE[graph-explorer<br/>container<br/>TypeScript page]
+    IDX -.->|export_explorer_graph.py| EX[(data/explorer/<br/>graph.json)]
+    GE --- EX
 ```
 
 | Component | What it is |
 |-----------|------------|
 | `caddy` (ports 80/443, VPS only) | HTTPS entry point: certificate, guest sign-in, legal pages and footer ([`Caddyfile`](Caddyfile)) |
 | `open-webui` (port 3000, localhost only) | Chat UI. The pipeline appears in the model picker as **Capital Markets RAG** |
+| `graph-explorer` (port 3001, localhost only; `/graph/` on the VPS) | TypeScript page for exploring the concept graph ([`graph-explorer/`](graph-explorer/), see [Graph explorer](#graph-explorer-typescript)) |
 | `pipelines-capital` (internal port 9099, not published) | Open WebUI Pipelines server that loads [`pipelines-capital/capital_rag_pipeline.py`](pipelines-capital/capital_rag_pipeline.py) at startup |
 | `data/` | Knowledge base and eval scripts plus the generated indexes (`faiss_public_index/`, optionally `faiss_capital_index/`, git-ignored), mounted at `/data` |
 | OpenAI | `text-embedding-3-large` for embeddings; `gpt-4.1` for answers; `gpt-4.1-mini` for grading and question concepts; `gpt-4o` for checking, revising and corroborating |
@@ -284,7 +291,11 @@ by the model. Start-page suggestions are verified the same way
 pick a cause and an effect and it shows the cause → effect chains between them (at most 4 steps), the net direction
 of each chain, and for every step the sentence from the sources that states it, with a link to the source.
 "Im Chat fragen" opens the chat with the chain as a question. Without a chain it offers the effects of the cause
-and the causes of the effect as next choices. Locally it runs at http://localhost:3001, on the VPS at `/graph/`.
+and the causes of the effect as next choices. Locally it runs at http://localhost:3001, on the VPS at `/graph/`
+([example: Leitzins → Kurs einer Anleihe](https://mjoelnir.ai/graph/#von=Leitzins&nach=Bond+Price)); the start page of
+the chat links it under the model name.
+
+![Graph explorer: three chains from Leitzins to Kurs einer Anleihe, the selected one drawn left to right](docs/graph-explorer.png)
 
 ```mermaid
 flowchart LR
