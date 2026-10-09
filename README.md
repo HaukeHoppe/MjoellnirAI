@@ -141,9 +141,11 @@ docker exec open-webui-pipelines-capital python /data/ingest_capital_chunks.py -
 docker exec open-webui-pipelines-capital python /data/generate_start_suggestions.py --index_dir /data/faiss_public_index
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/faiss_public_index/start_suggestions.json
 #    or the three hand-picked questions shown on the public site (checked against the pipeline), with the
-#    repository link Open WebUI shows under the model name:
+#    links Open WebUI shows under the model name (guest.css turns the explorer link into a button):
 docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --file /data/start_suggestions_public.json \
-  --description "[github.com/HaukeHoppe/MjoelnirAI](https://github.com/HaukeHoppe/MjoelnirAI)"
+  --description "**[🔗 Wirkungsketten-Explorer: Ketten im Graphen ansehen](/graph/)** · [GitHub](https://github.com/HaukeHoppe/MjoelnirAI)"
+#    locally: the same links with the explorer at http://localhost:3001/, keeping the current suggestions:
+#    docker exec -w /app/backend open-webui python /data/apply_start_suggestions.py --keep_suggestions --description "…"
 cp data/faiss_public_index/lizenzen.html legal/lizenzen.html
 docker restart open-webui-pipelines-capital
 ```
